@@ -12,8 +12,11 @@ services:
         value: '829342319'
       - key: PORT
         value: '8080'
-      #- key: DATABASE_URL
-       # fromDatabase:
-        #  name: bot-database  # Replace with your actual DB service name
-        #  property: connectionString
+      - key: PENDER_EXTERNAL_URL
+        value: 'https://beat-anime-link-provider-bot.onrender.com'
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bot-database  # Replace with your actual DB service name
+          property: connectionString
+
 
