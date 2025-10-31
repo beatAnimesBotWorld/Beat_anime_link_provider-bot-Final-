@@ -1293,7 +1293,7 @@ async def cleanup_task(context: ContextTypes.DEFAULT_TYPE):
 
 def keep_alive():
     while True:
-        time.sleep(840)
+        time.sleep(300)
         try:
             requests.get("https://www.google.com/robots.txt", timeout=10)
         except:
@@ -1411,4 +1411,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
