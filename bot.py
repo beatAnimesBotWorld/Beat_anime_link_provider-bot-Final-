@@ -1421,7 +1421,7 @@ def start_health_server():
 
 
     
-    if WEBHOOK_URL and BOT_TOKEN:
+if WEBHOOK_URL and BOT_TOKEN:
     # Start the simple HTTP health endpoint for UptimeRobot
     start_health_server()
 
@@ -1443,6 +1443,7 @@ else:
 
 if __name__ == "__main__":
     main()
+
 
 
 
