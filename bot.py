@@ -54,9 +54,14 @@ async def delete_update_message(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = update.effective_user.id
     
     if user_id == ADMIN_ID and user_states.get(user_id) == PENDING_BROADCAST:
-        return 
+        return
         
     if update.message:
+        # *** ADDED LOGIC FOR /start COMMAND HERE ***
+        if update.message.text and update.message.text.startswith('/start'):
+            logger.info(f"Skipping deletion for /start command by user {user_id}")
+            return
+        # *******************************************
         try:
             await update.message.delete()
         except Exception as e:
@@ -1443,6 +1448,7 @@ else:
 
 if __name__ == "__main__":
     main()
+
 
 
 
