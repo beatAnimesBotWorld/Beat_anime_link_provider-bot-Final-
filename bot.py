@@ -1401,7 +1401,7 @@ def main():
 
     if application.job_queue:
         application.job_queue.run_repeating(cleanup_task, interval=600, first=10)
-   if WEBHOOK_URL and BOT_TOKEN != "YOUR_TOKEN_HERE":
+   if WEBHOOK_URL and BOT_TOKEN != "7877393813:AAEqVD-Ar6M4O3yg6h2ZuNUN_PPY4NRVr10":
         keep_alive_thread = Thread(target=keep_alive, daemon=True)
         keep_alive_thread.start()
 
@@ -1417,3 +1417,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
