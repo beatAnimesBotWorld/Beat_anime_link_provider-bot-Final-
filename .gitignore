@@ -1,0 +1,28 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+
+# Local development
+.env
+.env.local
+
+# Replit specific
+.pythonlibs/
+.cache/
+.upm/
+
+# Logs
+*.log
+
+# Temp files
+restart_message.json
