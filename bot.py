@@ -1,7 +1,5 @@
 import os
 import logging
-import psycopg2
-import secrets
 import requests
 import time
 import asyncio
@@ -9,9 +7,12 @@ import sys
 import json
 from datetime import datetime, timedelta
 from functools import wraps
-from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+
+# NEW IMPORTS - Add these two lines
+from database_safe import *
+from health_check import health_server
 
 # Configure logging
 logging.basicConfig(
@@ -77,208 +78,7 @@ async def delete_bot_prompt(context: ContextTypes.DEFAULT_TYPE, chat_id):
             logger.warning(f"Could not delete bot prompt message {prompt_id}: {e}")
     return prompt_id
 
-# ========== DATABASE FUNCTIONS (PostgreSQL) ==========
 
-def get_db_connection():
-    """Get PostgreSQL connection"""
-    return psycopg2.connect(DATABASE_URL, sslmode='require')
-
-def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id BIGINT PRIMARY KEY,
-            username TEXT,
-            first_name TEXT,
-            last_name TEXT,
-            joined_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            is_banned BOOLEAN DEFAULT FALSE
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS force_sub_channels (
-            channel_id SERIAL PRIMARY KEY,
-            channel_username TEXT UNIQUE,
-            channel_title TEXT,
-            added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            is_active BOOLEAN DEFAULT TRUE
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS generated_links (
-            link_id TEXT PRIMARY KEY,
-            channel_username TEXT,
-            user_id BIGINT,
-            created_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            never_expires BOOLEAN DEFAULT FALSE
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-def get_user_id_by_username(username):
-    """Looks up a user's ID by their @username (case-insensitive)."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    clean_username = username.lstrip('@').lower() 
-    cursor.execute('SELECT user_id FROM users WHERE LOWER(username) = %s', (clean_username,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else None
-    
-def resolve_target_user_id(arg):
-    """Tries to resolve an argument (ID or @username) into a numerical user ID."""
-    try:
-        return int(arg)
-    except ValueError:
-        pass
-
-    if arg:
-        return get_user_id_by_username(arg)
-    
-    return None
-
-def ban_user(user_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('UPDATE users SET is_banned = TRUE WHERE user_id = %s', (user_id,))
-    conn.commit()
-    conn.close()
-
-def unban_user(user_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('UPDATE users SET is_banned = FALSE WHERE user_id = %s', (user_id,))
-    conn.commit()
-    conn.close()
-
-def is_user_banned(user_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT is_banned FROM users WHERE user_id = %s', (user_id,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else False
-
-def add_user(user_id, username, first_name, last_name):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    clean_username = username.lstrip('@') if username else None
-    cursor.execute('''
-        INSERT INTO users (user_id, username, first_name, last_name)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (user_id) 
-        DO UPDATE SET username = EXCLUDED.username, 
-                      first_name = EXCLUDED.first_name, 
-                      last_name = EXCLUDED.last_name
-    ''', (user_id, clean_username, first_name, last_name))
-    conn.commit()
-    conn.close()
-
-def get_user_count():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*) FROM users')
-    count = cursor.fetchone()[0]
-    conn.close()
-    return count
-
-def get_all_users(limit=None, offset=0):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    if limit is None:
-        cursor.execute('SELECT user_id, username, first_name, last_name, joined_date, is_banned FROM users ORDER BY joined_date DESC')
-    else:
-        cursor.execute('SELECT user_id, username, first_name, last_name, joined_date, is_banned FROM users ORDER BY joined_date DESC LIMIT %s OFFSET %s', (limit, offset))
-    users = cursor.fetchall()
-    conn.close()
-    return users
-
-def get_user_info_by_id(user_id):
-    """Fetches a single user's details by ID."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT user_id, username, first_name, last_name, joined_date, is_banned FROM users WHERE user_id = %s', (user_id,))
-    user = cursor.fetchone()
-    conn.close()
-    return user
-
-def add_force_sub_channel(channel_username, channel_title):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute('UPDATE force_sub_channels SET is_active = TRUE, channel_title = %s WHERE channel_username = %s', (channel_title, channel_username))
-        if cursor.rowcount == 0:
-            cursor.execute('''
-                INSERT INTO force_sub_channels (channel_username, channel_title, is_active)
-                VALUES (%s, %s, TRUE)
-            ''', (channel_username, channel_title))
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"DB Error adding channel: {e}")
-        return False
-    finally:
-        conn.close()
-
-def get_all_force_sub_channels(return_usernames_only=False):
-    """
-    Fetches all active force sub channels.
-    If return_usernames_only is True, returns a list of usernames.
-    Otherwise, returns a list of tuples: [(username, title), ...]
-    """
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    if return_usernames_only:
-        cursor.execute('SELECT channel_username FROM force_sub_channels WHERE is_active = TRUE ORDER BY channel_title')
-        channels = [row[0] for row in cursor.fetchall()]
-    else:
-        cursor.execute('SELECT channel_username, channel_title FROM force_sub_channels WHERE is_active = TRUE ORDER BY channel_title')
-        channels = cursor.fetchall()
-    conn.close()
-    return channels
-
-def get_force_sub_channel_info(channel_username):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT channel_username, channel_title FROM force_sub_channels WHERE channel_username = %s AND is_active = TRUE', (channel_username,))
-    channel = cursor.fetchone()
-    conn.close()
-    return channel
-
-def delete_force_sub_channel(channel_username):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('UPDATE force_sub_channels SET is_active = FALSE WHERE channel_username = %s', (channel_username,))
-    conn.commit()
-    conn.close()
-
-def generate_link_id(channel_username, user_id, never_expires=False):
-    """Generate a link that optionally never expires"""
-    link_id = secrets.token_urlsafe(16)
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO generated_links (link_id, channel_username, user_id, never_expires)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (link_id) DO UPDATE SET channel_username = EXCLUDED.channel_username
-    ''', (link_id, channel_username, user_id, never_expires))
-    conn.commit()
-    conn.close()
-    return link_id
-
-def get_link_info(link_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT channel_username, user_id, created_time, never_expires
-        FROM generated_links WHERE link_id = %s
-    ''', (link_id,))
-    result = cursor.fetchone()
-    conn.close()
-    return result
-    
 # ========== FORCE SUBSCRIPTION LOGIC ==========
 
 async def is_user_subscribed(user_id: int, bot) -> bool:
@@ -1288,55 +1088,57 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Exception in update: {context.error}")
 
 async def cleanup_task(context: ContextTypes.DEFAULT_TYPE):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cutoff = datetime.now() - timedelta(days=7)
-    # Only delete expired links that are not set to never expire
-    cursor.execute('DELETE FROM generated_links WHERE created_time < %s AND never_expires = FALSE', (cutoff,))
-    conn.commit()
-    conn.close()
+    cleanup_expired_links()
 
-def keep_alive():
-    while True:
-        time.sleep(300)
-        try:
-            requests.get("https://www.google.com/robots.txt", timeout=10)
-        except:
-            pass
+# ADD THESE TWO FUNCTIONS BEFORE main()
+async def post_init(application):
+    """Start health check server"""
+    await health_server.start()
+    logger.info("✅ Health check server started")
+
+async def post_shutdown(application):
+    """Clean shutdown"""
+    await health_server.stop()
+    db_manager.close_all()
+    logger.info("✅ Shutdown complete")
 
 def main():
-    init_db()
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_TOKEN_HERE":
         logger.error("BOT_TOKEN not set!")
         return
     
     if not DATABASE_URL:
-        logger.error("DATABASE_URL not set! Add your Neon PostgreSQL connection string.")
+        logger.error("DATABASE_URL not set!")
         return
-
-    application = Application.builder().token(BOT_TOKEN).build()
     
-    # Test PostgreSQL connection
+    # Initialize database with connection pooling
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT version();')
-        version = cursor.fetchone()
-        logger.info(f"✅ Connected to PostgreSQL: {version[0][:50]}...")
-        conn.close()
+        init_db(DATABASE_URL)
+        logger.info("✅ Database connected (no schema changes)")
     except Exception as e:
         logger.error(f"❌ Database connection failed: {e}")
         return
     
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Test database connection
+    try:
+        user_count = get_user_count()
+        logger.info(f"✅ Database working - {user_count} users found")
+    except Exception as e:
+        logger.error(f"❌ Database test failed: {e}")
+        return
+    
+    # Handle restart - COMPLETE CODE HERE
     if os.path.exists('restart_message.json'):
         try:
             with open('restart_message.json', 'r') as f:
                 restart_info = json.load(f)
-            os.remove('restart_message.json') 
+            os.remove('restart_message.json')
 
             original_chat_id = restart_info['chat_id']
             admin_id = restart_info['admin_id']
-            message_id_to_copy = restart_info.get('message_id_to_copy') 
+            message_id_to_copy = restart_info.get('message_id_to_copy')
 
             async def post_restart_notification(context: ContextTypes.DEFAULT_TYPE):
                 try:
@@ -1348,8 +1150,8 @@ def main():
                     
                     if message_id_to_copy:
                         if message_id_to_copy == 'admin':
-                             await send_admin_menu(original_chat_id, context)
-                             return
+                            await send_admin_menu(original_chat_id, context)
+                            return
                         
                         try:
                             await context.bot.copy_message(
@@ -1358,18 +1160,18 @@ def main():
                                 message_id=message_id_to_copy
                             )
                         except Exception as e:
-                            logger.error(f"Failed to copy custom restart message ID {message_id_to_copy}: {e}")
+                            logger.error(f"Failed to copy custom restart message: {e}")
                             await context.bot.send_message(
                                 chat_id=original_chat_id,
                                 text="⚠️ **Custom message copy failed.** Falling back to Admin Panel.",
                                 parse_mode='Markdown'
                             )
-                            await send_admin_menu(original_chat_id, context) 
+                            await send_admin_menu(original_chat_id, context)
                     else:
-                        await send_admin_menu(original_chat_id, context) 
+                        await send_admin_menu(original_chat_id, context)
                     
-                    if admin_id != original_chat_id: 
-                         await context.bot.send_message(
+                    if admin_id != original_chat_id:
+                        await context.bot.send_message(
                             chat_id=admin_id, 
                             text="⚠️ **System Notification:** The bot has successfully reloaded.",
                             parse_mode='Markdown'
@@ -1378,44 +1180,41 @@ def main():
                 except Exception as e:
                     logger.error(f"Failed to send post-restart notification: {e}")
 
-            application.job_queue.run_once(post_restart_notification, 1) 
+            application.job_queue.run_once(post_restart_notification, 1)
             logger.info("Post-restart notification scheduled.")
             
         except Exception as e:
             logger.error(f"Error processing restart_message.json: {e}")
     
+    # Register handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
     
     admin_filter = filters.User(user_id=ADMIN_ID)
     application.add_handler(CommandHandler("reload", reload_command, filters=admin_filter))
-    application.add_handler(CommandHandler("stats", stats_command, filters=admin_filter)) 
+    application.add_handler(CommandHandler("stats", stats_command, filters=admin_filter))
     application.add_handler(CommandHandler("addchannel", add_channel_command, filters=admin_filter))
     application.add_handler(CommandHandler("removechannel", remove_channel_command, filters=admin_filter))
     application.add_handler(CommandHandler("banuser", ban_user_command, filters=admin_filter))
     application.add_handler(CommandHandler("unbanuser", unban_user_command, filters=admin_filter))
     
     application.add_handler(MessageHandler(admin_filter & ~filters.COMMAND, handle_admin_message))
-    
     application.add_error_handler(error_handler)
-
+    
+    # Schedule cleanup
     if application.job_queue:
         application.job_queue.run_repeating(cleanup_task, interval=600, first=10)
-    if WEBHOOK_URL and BOT_TOKEN != "YOUR_TOKEN_HERE":
-        keep_alive_thread = Thread(target=keep_alive, daemon=True)
-        keep_alive_thread.start()
-
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=BOT_TOKEN,
-            webhook_url=WEBHOOK_URL + BOT_TOKEN
-        )
-    else:
-        logger.info("Running in polling mode...")
-        application.run_polling()
+    
+    # Add health check lifecycle
+    application.post_init = post_init
+    application.post_shutdown = post_shutdown
+    
+    # Run bot
+    logger.info("🚀 Starting bot...")
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True
+    )
 
 if __name__ == "__main__":
     main()
-
-
