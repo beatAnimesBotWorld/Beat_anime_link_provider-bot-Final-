@@ -1,16 +1,14 @@
 import os
 import logging
-import requests
-import time
-import asyncio
 import sys
 import json
+import asyncio
 from datetime import datetime, timedelta
 from functools import wraps
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
-# NEW IMPORTS - Add these two lines
+# NEW IMPORTS
 from database_safe import *
 from health_check import health_server
 
@@ -1218,3 +1216,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
