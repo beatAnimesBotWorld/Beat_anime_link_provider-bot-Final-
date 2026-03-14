@@ -68,13 +68,13 @@ async def _send_maintenance_block(update: Update, context: ContextTypes.DEFAULT_
     backup_url = get_setting("backup_channel_url", "")
     text = (
         "🔧 <b>Bot Under Maintenance</b>\n\n"
-        "<blockquote><b>We are currently performing scheduled maintenance.\n"
-        "Existing members can still use the bot normally.</b></blockquote>\n\n"
+        "<blockquote><b>We are currently performing scheduled maintenance.</b>\n"
+        "<b>New registrations are temporarily paused.</b></blockquote>\n\n"
         "<b>Please join our backup channel to stay updated.</b>"
     )
     keyboard = []
     if backup_url:
-        keyboard.append([InlineKeyboardButton(" Backup Channel", url=backup_url)])
+        keyboard.append([InlineKeyboardButton("📢 Backup Channel", url=backup_url)])
 
     if update.message:
         await update.message.reply_text(text, parse_mode='HTML',
@@ -147,7 +147,7 @@ def force_sub_required(func):
         # ── Ban check ─────────────────────────────────────────────────────
         if is_user_banned(user.id):
             await delete_update_message(update, context)
-            ban_text = "🚫 You have been banned from using this bot."
+            ban_text = "🚫 <b>You have been banned from using this bot.</b>"
             if update.message:
                 await update.message.reply_text(ban_text)
             elif update.callback_query:
@@ -173,9 +173,9 @@ def force_sub_required(func):
             for uname, title, jbr in channels_info:
                 clean = uname.lstrip('@')
                 if jbr:
-                    btn_label = f" Request to Join — {title}"
+                    btn_label = f"📨 Request to Join — {title}"
                 else:
-                    btn_label = f" {title}"
+                    btn_label = f"✅ Join — {title}"
                 keyboard.append([InlineKeyboardButton(btn_label, url=f"https://t.me/{clean}")])
                 lines.append(f"• <b>{title}</b> (<code>{uname}</code>)")
 
@@ -184,7 +184,7 @@ def force_sub_required(func):
             text = (
                 "<b>Join our channels to use this bot:</b>\n\n"
                 f"{channels_text}\n\n"
-                "<blockquote><b>After joining all channels, tap Verify to continue.</b></blockquote>"
+                "<blockquote><b>After joining all channels, tap</b> <b>Verify</b> <b>to continue.</b></blockquote>"
             )
             if update.message:
                 await update.message.reply_text(text, parse_mode='HTML',
@@ -354,7 +354,7 @@ async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not links:
         await update.message.reply_text(
-            "📂 No links found for this bot yet.", parse_mode='HTML')
+            "📂 <b>No links found for this bot yet.</b>", parse_mode='HTML')
         return
 
     lines = [f"📋 <b>Link Backup</b> — <code>@{bot_uname}</code>\n"]
@@ -407,9 +407,9 @@ async def move_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_states[update.effective_user.id] = PENDING_MOVE_TARGET
     msg = await update.message.reply_text(
         "🔀 <b>Move Links</b>\n\n"
-        "Send the <b>@username</b> of the target bot to move all current links to it.\n\n"
-        "<blockquote>All deep links will be updated to use the new bot's username. "
-        "Share this command carefully — links in posts will need manual updating.</blockquote>",
+        "<b>Send the @username of the target bot to move all current links to it.</b>\n\n"
+        "<blockquote><b>All deep links will be updated to use the new bot's username.</b> "
+        "<b>Share this command carefully — links in posts will need manual updating.</b></blockquote>",
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("🔙 CANCEL", callback_data="admin_back")
@@ -551,19 +551,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         link_id = context.args[0]
 
         # ── Clone redirect ────────────────────────────────────────────────
-        # If redirect is ON, send the SAME link_id but with the clone bot's username.
-        # The clone shares the same DB so it handles the link identically.
+        # Only redirects from the MAIN bot (not from clones themselves).
+        # Clones share the same DB so clone_redirect_enabled is true for them too —
+        # we prevent the infinite loop by checking if THIS bot is registered as a clone.
         clone_redirect = get_setting("clone_redirect_enabled", "false").lower() == "true"
-        if clone_redirect and user.id != ADMIN_ID:
+        i_am_a_clone   = get_clone_bot_by_username(BOT_USERNAME) is not None
+        if clone_redirect and not i_am_a_clone and user.id != ADMIN_ID:
             clones = get_all_clone_bots(active_only=True)
-            if clones:
-                # Use the first (primary) active clone
-                _, _, clone_uname, _, _ = clones[0]
-                clone_link = f"https://t.me/{clone_uname}?start={link_id}"
+            # Pick first clone that isn't this bot itself
+            target_clone = next(
+                (c for c in clones if c[2].lower() != BOT_USERNAME.lower()), None
+            )
+            if target_clone:
+                clone_uname = target_clone[2]
+                clone_link  = f"https://t.me/{clone_uname}?start={link_id}"
                 await context.bot.send_message(
                     update.effective_chat.id,
-                    "🔄 <b>ɢᴇᴛᴛɪɴɢ ʏᴏᴜʀ ʟɪɴᴋ…</b>\n\n"
-                    "<blockquote><b>Tap below to access your channel link via our partner bot.<b></blockquote>",
+                    "🔄 <b>ɢᴇᴛᴛɪɴɢ ʏᴏᴜʀ ʟɪɴᴋ…</b>",
                     parse_mode='HTML',
                     reply_markup=InlineKeyboardMarkup([[
                         InlineKeyboardButton("• ɢᴇᴛ ʟɪɴᴋ •", url=clone_link)
@@ -599,7 +603,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Error copying welcome: {e}")
             await context.bot.send_message(
                 update.effective_chat.id,
-                "👋 <b>Welcome!</b>",
+                "👋 <b>Welcome to the bot!</b>",
                 parse_mode='HTML',
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
@@ -627,7 +631,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
     # Non-text states that need text
     if text is None and state not in []:
         await delete_update_message(update, context)
-        msg = await update.message.reply_text("❌ Send text only.", parse_mode='HTML')
+        msg = await update.message.reply_text("❌ <b>Send text only.</b>", parse_mode='HTML')
         context.user_data['bot_prompt_message_id'] = msg.message_id
         return
 
@@ -635,13 +639,13 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
     if state == ADD_CHANNEL_USERNAME:
         await delete_update_message(update, context)
         if not text.startswith('@'):
-            msg = await update.message.reply_text("❌ Include @ in username.", parse_mode='HTML')
+            msg = await update.message.reply_text("❌ <b>Include @ in the username.</b>", parse_mode='HTML')
             context.user_data['bot_prompt_message_id'] = msg.message_id
             return
         context.user_data['channel_username'] = text
         user_states[user_id] = ADD_CHANNEL_TITLE
         msg = await update.message.reply_text(
-            "📝 Now send the <b>channel title</b>:",
+            "📝 <b>Now send the channel title:</b>",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("🔙 CANCEL", callback_data="manage_force_sub")
@@ -655,7 +659,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data['channel_title'] = text
         user_states[user_id] = ADD_CHANNEL_JBR
         msg = await update.message.reply_text(
-            "🔐 Is this a <b>private channel</b> that uses join requests?",
+            "🔐 <b>Is this a private channel that uses join requests?</b>",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📨 Yes – Request to Join", callback_data="channel_jbr_yes")],
@@ -671,22 +675,21 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
         if not (identifier.startswith('@') or identifier.startswith('-100')
                 or identifier.lstrip('-').isdigit()):
             msg = await update.message.reply_text(
-                "❌ Use @username or channel ID (-100...)", parse_mode='HTML')
+                "❌ <b>Use @username or channel ID (-100...)</b>", parse_mode='HTML')
             context.user_data['bot_prompt_message_id'] = msg.message_id
             return
         try:
             chat = await context.bot.get_chat(identifier)
         except Exception:
             await update.message.reply_text(
-                "❌ Cannot access channel. Make bot admin there.", parse_mode='HTML')
+                "❌ <b>Cannot access channel. Make the bot admin in that channel first.</b>", parse_mode='HTML')
             return
         context.user_data['generating_link_channel'] = str(identifier)
         context.user_data['generating_link_channel_title_hint'] = chat.title or identifier
         user_states[user_id] = GENERATE_LINK_CHANNEL_TITLE
         msg = await update.message.reply_text(
             f"✅ Channel found: <b>{chat.title}</b>\n\n"
-            "📝 Now send a <b>label/title</b> for this link "
-            "(used in /backup and link management):",
+            "📝 <b>Now send a label/title for this link (used in /backup and link management):</b>",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("🔙 CANCEL", callback_data="admin_back")
@@ -702,7 +705,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
         user_states.pop(user_id, None)
 
         if not channel_identifier:
-            await update.message.reply_text("❌ Session expired. Try again.")
+            await update.message.reply_text("❌ <b>Session expired. Please try again.</b>")
             return
 
         link_id = generate_link_id(
@@ -744,7 +747,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
         if not queue:
             user_states.pop(user_id, None)
             await update.message.reply_text(
-                "✅ <b>All titles filled!</b>\nUse /backup to review.",
+                "✅ <b>All titles filled! Use /backup to review.</b>",
                 parse_mode='HTML',
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("📋 /backup", callback_data="cmd_backup")
@@ -857,7 +860,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"Mode: {jbr_label}",
                     parse_mode='HTML',
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton(" Manage Channels", callback_data="manage_force_sub")
+                        InlineKeyboardButton("📢 Manage Channels", callback_data="manage_force_sub")
                     ]])
                 )
             except Exception:
@@ -896,7 +899,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         queue = context.user_data.get('fill_titles_queue', [])
         if not queue:
             user_states.pop(user_id, None)
-            await query.edit_message_text("✅ Done filling titles.", parse_mode='HTML')
+            await query.edit_message_text("✅ <b>Done filling titles.</b>", parse_mode='HTML')
             return
         next_link = queue.pop(0)
         context.user_data['fill_titles_queue']    = queue
@@ -990,7 +993,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         msg = await context.bot.send_message(
             query.message.chat_id,
-            "📢 Send the <b>https:// URL</b> of your backup channel:",
+            "📢 <b>Send the https:// URL of your backup channel:</b>",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("🔙 CANCEL", callback_data="admin_settings")
@@ -1026,7 +1029,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         msg = await context.bot.send_message(
             query.message.chat_id,
-            "🤖 Send the <b>BOT TOKEN</b> of the clone bot:",
+            "🤖 <b>Send the BOT TOKEN of the clone bot:</b>",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("🔙 CANCEL", callback_data="manage_clones")
@@ -1135,7 +1138,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         msg = await context.bot.send_message(
             query.message.chat_id,
-            "📢 Send the <b>@username</b> of the channel to add:",
+            "📢 <b>Send the @username of the channel to add:</b>",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("🔙 CANCEL", callback_data="manage_force_sub")
@@ -1160,7 +1163,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton(t, callback_data=f"delete_{u.lstrip('@')}")]
                     for u, t, _ in channels]
         keyboard.append([InlineKeyboardButton("🔙 BACK", callback_data="manage_force_sub")])
-        await query.edit_message_text("🗑️ Select channel to delete:",
+        await query.edit_message_text("🗑️ <b>Select channel to delete:</b>",
                                       parse_mode='HTML',
                                       reply_markup=InlineKeyboardMarkup(keyboard))
         return
@@ -1207,7 +1210,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         msg = await context.bot.send_message(
             query.message.chat_id,
-            "🔗 Send channel <b>@username</b> or <b>ID</b> to generate a deep link:",
+            "🔗 <b>Send channel @username or ID to generate a deep link:</b>",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("🔙 CANCEL", callback_data="admin_back")
@@ -1241,7 +1244,7 @@ async def handle_channel_link_deep(update: Update, context: ContextTypes.DEFAULT
                                    link_id: str):
     link_info = get_link_info(link_id)
     if not link_info:
-        await update.message.reply_text("❌ This link is invalid or not registered.", parse_mode='HTML')
+        await update.message.reply_text("❌ <b>This link is invalid or not registered.</b>", parse_mode='HTML')
         return
 
     channel_identifier, creator_id, created_time, never_expires = link_info
@@ -1252,7 +1255,7 @@ async def handle_channel_link_deep(update: Update, context: ContextTypes.DEFAULT
         if not never_expires:
             created_dt = datetime.fromisoformat(str(created_time))
             if datetime.now() > created_dt + timedelta(minutes=LINK_EXPIRY_MINUTES):
-                await update.message.reply_text("❌ This link has expired.", parse_mode='HTML')
+                await update.message.reply_text("❌ <b>This link has expired.</b>", parse_mode='HTML')
                 return
 
         chat        = await context.bot.get_chat(channel_identifier)
@@ -1263,13 +1266,13 @@ async def handle_channel_link_deep(update: Update, context: ContextTypes.DEFAULT
         keyboard = [[InlineKeyboardButton("• 𝗝𝗢𝗜𝗡 𝗖𝗛𝗔𝗡𝗡𝗘𝗟 •", url=invite_link.invite_link)]]
         await update.message.reply_text(
             "<b>ʜᴇʀᴇ ɪs ʏᴏᴜʀ ʟɪɴᴋ! ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ᴛᴏ ᴘʀᴏᴄᴇᴇᴅ</b>\n\n"
-            "<blockquote><u>If the link expires, tap the original post link again to get a fresh one.</u></blockquote>",
+            "<blockquote><b><u>If the link expires, tap the original post link again to get a fresh one.</u></b></blockquote>",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     except Exception as e:
         logger.error(f"Error generating invite link: {e}")
-        await update.message.reply_text("❌ Error creating link. Contact admin.", parse_mode='HTML')
+        await update.message.reply_text("❌ <b>Error creating link. Contact admin.</b>", parse_mode='HTML')
 
 # ─────────────────────────── ADMIN PANEL VIEWS ───────────────────────────────
 
@@ -1296,7 +1299,7 @@ async def send_admin_menu(chat_id, context, query=None):
     ]
     text = (
         "👨‍💼 <b>ADMIN PANEL</b>\n\n"
-        f"<blockquote>{maint_label}\n{clone_label}</blockquote>"
+        f"<blockquote><b>{maint_label}</b>\n<b>{clone_label}</b></blockquote>"
     )
     await context.bot.send_message(chat_id, text, parse_mode='HTML',
                                    reply_markup=InlineKeyboardMarkup(keyboard))
