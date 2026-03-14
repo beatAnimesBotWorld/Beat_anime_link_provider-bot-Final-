@@ -402,7 +402,7 @@ async def move_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if context.args:
         target = context.args[0].lstrip('@')
-        _do_move(update, context, target)
+        await _do_move(update, context, target)
         return
 
     user_states[update.effective_user.id] = PENDING_MOVE_TARGET
@@ -420,17 +420,65 @@ async def move_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _do_move(update, context, target_username: str):
+    chat_id = update.effective_chat.id
+    target_username = target_username.lstrip('@')
+
+    # Fetch all links BEFORE moving (still under old username)
+    all_links = get_all_links(bot_username=BOT_USERNAME, limit=500)
+
+    if not all_links:
+        await context.bot.send_message(
+            chat_id,
+            f"⚠️ No links found under <code>@{BOT_USERNAME}</code>.",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 BACK", callback_data="admin_back")
+            ]])
+        )
+        return
+
+    # Update DB — reassign source_bot_username
     count = move_links_to_bot(BOT_USERNAME, target_username)
-    await context.bot.send_message(
-        update.effective_chat.id,
-        f"✅ <b>Moved {count} link(s)</b> from <code>@{BOT_USERNAME}</code> "
-        f"→ <code>@{target_username}</code>\n\n"
-        "<blockquote>Update the bot username in any posts where you shared the links.</blockquote>",
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 BACK", callback_data="admin_back")
-        ]])
+
+    # Build the formatted list with NEW bot username
+    # Split into Telegram-safe chunks (≤4096 chars)
+    header = (
+        f"✅ <b>Moved {count} link(s)</b>\n"
+        f"<code>@{BOT_USERNAME}</code> → <code>@{target_username}</code>\n\n"
+        f"📋 <b>Updated links for your channel index</b>\n"
+        f"<blockquote>Copy each link below and replace the old ones in your posts.</blockquote>\n\n"
     )
+
+    lines = []
+    for link_id, ch_uname, ch_title, _src, _created, never_exp in all_links:
+        new_link  = f"https://t.me/{target_username}?start={link_id}"
+        title_str = ch_title if ch_title else ch_uname
+        exp_icon  = "♾" if never_exp else "⏱"
+        lines.append(
+            f"{exp_icon} <b>{title_str}</b>\n"
+            f"   Channel: <code>{ch_uname}</code>\n"
+            f"   🔗 <code>{new_link}</code>"
+        )
+
+    # Send header + paginated link blocks
+    chunks, current = [], header
+    for line in lines:
+        entry = line + "\n\n"
+        if len(current) + len(entry) > 4000:
+            chunks.append(current)
+            current = ""
+        current += entry
+    if current.strip():
+        chunks.append(current)
+
+    for i, chunk in enumerate(chunks):
+        kb = None
+        if i == len(chunks) - 1:
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 BACK TO MENU", callback_data="admin_back")
+            ]])
+        await context.bot.send_message(chat_id, chunk.strip(), parse_mode='HTML',
+                                       reply_markup=kb)
 
 
 # ─── /addclone — register a clone bot ────────────────────────────────────────
@@ -503,23 +551,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args and len(context.args) > 0:
         link_id = context.args[0]
 
-        # Clone redirect: if enabled and clone bots exist, offer clone buttons
+        # ── Clone redirect ────────────────────────────────────────────────
+        # If redirect is ON, send the SAME link_id but with the clone bot's username.
+        # The clone shares the same DB so it handles the link identically.
         clone_redirect = get_setting("clone_redirect_enabled", "false").lower() == "true"
-        clones = get_all_clone_bots(active_only=True)
-        if clone_redirect and clones and user.id != ADMIN_ID:
-            keyboard = []
-            for _, _, clone_uname, _, _ in clones:
-                deep = f"https://t.me/{clone_uname}?start={link_id}"
-                keyboard.append([InlineKeyboardButton(f"🤖 Open via @{clone_uname}", url=deep)])
-            keyboard.append([InlineKeyboardButton("📢 Main Channel", url=PUBLIC_ANIME_CHANNEL_URL)])
-            await context.bot.send_message(
-                update.effective_chat.id,
-                "🔀 <b>Access via our partner bots:</b>\n\n"
-                "<blockquote>Click any bot below to get your channel access link.</blockquote>",
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            return
+        if clone_redirect and user.id != ADMIN_ID:
+            clones = get_all_clone_bots(active_only=True)
+            if clones:
+                # Use the first (primary) active clone
+                _, _, clone_uname, _, _ = clones[0]
+                clone_link = f"https://t.me/{clone_uname}?start={link_id}"
+                await context.bot.send_message(
+                    update.effective_chat.id,
+                    "🔄 <b>ɢᴇᴛᴛɪɴɢ ʏᴏᴜʀ ʟɪɴᴋ…</b>\n\n"
+                    "<blockquote>Tap below to access your channel link via our partner bot.</blockquote>",
+                    parse_mode='HTML',
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("• ɢᴇᴛ ʟɪɴᴋ •", url=clone_link)
+                    ]])
+                )
+                return
 
         await handle_channel_link_deep(update, context, link_id)
         return
