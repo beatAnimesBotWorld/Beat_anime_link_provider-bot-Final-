@@ -68,14 +68,13 @@ async def _send_maintenance_block(update: Update, context: ContextTypes.DEFAULT_
     backup_url = get_setting("backup_channel_url", "")
     text = (
         "🔧 <b>Bot Under Maintenance</b>\n\n"
-        "<blockquote>We are currently performing scheduled maintenance.\n"
-        "Existing members can still use the bot normally.\n"
-        "New registrations are temporarily paused.</blockquote>\n\n"
-        "Please join our backup channel to stay updated."
+        "<blockquote><b>We are currently performing scheduled maintenance.\n"
+        "Existing members can still use the bot normally.</b></blockquote>\n\n"
+        "<b>Please join our backup channel to stay updated.</b>"
     )
     keyboard = []
     if backup_url:
-        keyboard.append([InlineKeyboardButton("📢 Backup Channel", url=backup_url)])
+        keyboard.append([InlineKeyboardButton(" Backup Channel", url=backup_url)])
 
     if update.message:
         await update.message.reply_text(text, parse_mode='HTML',
@@ -174,9 +173,9 @@ def force_sub_required(func):
             for uname, title, jbr in channels_info:
                 clean = uname.lstrip('@')
                 if jbr:
-                    btn_label = f"📨 Request to Join — {title}"
+                    btn_label = f" Request to Join — {title}"
                 else:
-                    btn_label = f"✅ Join — {title}"
+                    btn_label = f" {title}"
                 keyboard.append([InlineKeyboardButton(btn_label, url=f"https://t.me/{clean}")])
                 lines.append(f"• <b>{title}</b> (<code>{uname}</code>)")
 
@@ -185,7 +184,7 @@ def force_sub_required(func):
             text = (
                 "<b>Join our channels to use this bot:</b>\n\n"
                 f"{channels_text}\n\n"
-                "<blockquote>After joining all channels, tap <b>Verify</b> to continue.</blockquote>"
+                "<blockquote><b>After joining all channels, tap Verify to continue.</b></blockquote>"
             )
             if update.message:
                 await update.message.reply_text(text, parse_mode='HTML',
@@ -564,7 +563,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(
                     update.effective_chat.id,
                     "🔄 <b>ɢᴇᴛᴛɪɴɢ ʏᴏᴜʀ ʟɪɴᴋ…</b>\n\n"
-                    "<blockquote>Tap below to access your channel link via our partner bot.</blockquote>",
+                    "<blockquote><b>Tap below to access your channel link via our partner bot.<b></blockquote>",
                     parse_mode='HTML',
                     reply_markup=InlineKeyboardMarkup([[
                         InlineKeyboardButton("• ɢᴇᴛ ʟɪɴᴋ •", url=clone_link)
@@ -826,7 +825,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "about_bot":
         about_text = (
             "<b>About Us</b>\n\n"
-            "<blockquote>Developed by @Beat_Anime_Ocean</blockquote>"
+            "<blockquote><b>Developed by @Beat_Anime_Ocean</b></blockquote>"
         )
         try:
             await query.delete_message()
@@ -858,7 +857,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"Mode: {jbr_label}",
                     parse_mode='HTML',
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("📢 Manage Channels", callback_data="manage_force_sub")
+                        InlineKeyboardButton(" Manage Channels", callback_data="manage_force_sub")
                     ]])
                 )
             except Exception:
