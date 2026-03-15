@@ -1627,19 +1627,45 @@ async def post_init(application):
     global BOT_USERNAME, I_AM_CLONE
     me           = await application.bot.get_me()
     BOT_USERNAME = me.username
+
     # Detect if this deployment is a clone by matching its token in the clone_bots table
     try:
         I_AM_CLONE = am_i_a_clone_token(BOT_TOKEN)
     except Exception:
         I_AM_CLONE = False
+
     if not I_AM_CLONE:
-        # Main bot saves its own token to DB so clones can use it for invite link creation
         set_main_bot_token(BOT_TOKEN)
         logger.info("✅ Main bot token saved to DB")
+
     role = "CLONE" if I_AM_CLONE else "MAIN"
     logger.info(f"✅ Bot identified as @{BOT_USERNAME} [{role}]")
     await health_server.start()
     logger.info("✅ Health check server started")
+
+    # ── Send restart notification to admin on EVERY startup (covers redeploys) ──
+    # If restart_message.json exists, use the username stored there.
+    # If not (redeploy / crash recovery), fall back to the bot's own username.
+    triggered_by = BOT_USERNAME  # default: show bot name on auto-redeploy
+    if os.path.exists('restart_message.json'):
+        try:
+            with open('restart_message.json') as f:
+                rinfo = json.load(f)
+            triggered_by = rinfo.get('triggered_by', BOT_USERNAME)
+        except Exception:
+            pass
+        # Don't remove the file here — main() still needs it for menu redirect
+
+    restart_text = f"Bᴏᴛ Rᴇsᴛᴀʀᴛᴇᴅ ʙʏ @{triggered_by}"
+    try:
+        await application.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=restart_text,
+            parse_mode='HTML'
+        )
+        logger.info(f"✅ Restart notification sent: {restart_text}")
+    except Exception as e:
+        logger.warning(f"Could not send restart notification: {e}")
 
 
 async def post_shutdown(application):
