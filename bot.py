@@ -217,10 +217,12 @@ async def reload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Usage: `/reload [msg_id or 'admin']`", parse_mode='Markdown')
             return
 
+    triggered_by = update.effective_user.username or str(update.effective_user.id)
     restart_info = {
         'chat_id': update.effective_chat.id,
         'admin_id': ADMIN_ID,
-        'message_id_to_copy': message_id_to_copy
+        'message_id_to_copy': message_id_to_copy,
+        'triggered_by': triggered_by
     }
     try:
         with open('restart_message.json', 'w') as f:
@@ -1681,13 +1683,30 @@ def main():
             admin_id            = restart_info['admin_id']
             message_id_to_copy  = restart_info.get('message_id_to_copy')
 
+            triggered_by = restart_info.get("triggered_by", "Unknown")
+            restart_text = (
+                f"Bᴏᴛ Rᴇsᴛᴀʀᴛᴇᴅ ʙʏ @{triggered_by}"
+            )
+
             async def post_restart_notification(ctx: ContextTypes.DEFAULT_TYPE):
                 try:
+                    # Send styled restart message to the chat that triggered it
                     await ctx.bot.send_message(
                         original_chat_id,
-                        "✅ **Bot reloaded!**",
-                        parse_mode='Markdown'
+                        restart_text,
+                        parse_mode='HTML'
                     )
+                    # If triggered from a different chat, also notify ADMIN_ID
+                    if original_chat_id != admin_id:
+                        try:
+                            await ctx.bot.send_message(
+                                admin_id,
+                                restart_text,
+                                parse_mode='HTML'
+                            )
+                        except Exception:
+                            pass
+                    # Open admin menu after notification
                     if message_id_to_copy == 'admin':
                         await send_admin_menu(original_chat_id, ctx)
                     elif message_id_to_copy:
