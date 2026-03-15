@@ -1,6 +1,7 @@
 """
 Safe database handler with connection pooling
-Supports: maintenance mode, clone bots, channel-titled links, settings
+Supports: maintenance mode, clone bots, channel-titled links, settings,
+          category settings, auto-forward, manga auto-update, feature flags.
 """
 import psycopg2
 from psycopg2 import pool
@@ -8,6 +9,7 @@ import logging
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 import secrets
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -67,52 +69,211 @@ db_manager = DatabaseManager()
 
 def init_db(database_url):
     db_manager.initialize(database_url, min_conn=1, max_conn=5)
-    _migrate_new_tables()
+    _create_tables()
     logger.info("✅ Database ready")
 
 
-def _migrate_new_tables():
-    """Idempotent: creates new tables and safely adds missing columns."""
+def _create_tables():
+    """Idempotent table creation – all tables in one place."""
     with db_manager.get_connection() as conn:
         cur = conn.cursor()
 
+        # Original tables
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS bot_settings (
-                key   TEXT PRIMARY KEY,
-                value TEXT
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                joined_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_banned BOOLEAN DEFAULT FALSE
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS force_sub_channels (
+                channel_username TEXT PRIMARY KEY,
+                channel_title TEXT NOT NULL,
+                is_active BOOLEAN DEFAULT TRUE,
+                join_by_request BOOLEAN DEFAULT FALSE
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS generated_links (
+                link_id TEXT PRIMARY KEY,
+                channel_username TEXT NOT NULL,
+                user_id BIGINT NOT NULL,
+                created_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                never_expires BOOLEAN DEFAULT FALSE,
+                channel_title TEXT,
+                source_bot_username TEXT
             )
         """)
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS clone_bots (
-                id           SERIAL PRIMARY KEY,
-                bot_token    TEXT UNIQUE NOT NULL,
+                id SERIAL PRIMARY KEY,
+                bot_token TEXT UNIQUE NOT NULL,
                 bot_username TEXT,
-                is_active    BOOLEAN   DEFAULT TRUE,
-                added_date   TIMESTAMP DEFAULT NOW()
+                is_active BOOLEAN DEFAULT TRUE,
+                added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
-        # Add new columns to generated_links
         cur.execute("""
-            DO $$ BEGIN
-                ALTER TABLE generated_links ADD COLUMN channel_title TEXT;
-            EXCEPTION WHEN duplicate_column THEN NULL; END $$;
-        """)
-        cur.execute("""
-            DO $$ BEGIN
-                ALTER TABLE generated_links ADD COLUMN source_bot_username TEXT;
-            EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
         """)
 
-        # Add join_by_request flag to force_sub_channels
+        # New tables for post generation
         cur.execute("""
-            DO $$ BEGIN
-                ALTER TABLE force_sub_channels ADD COLUMN join_by_request BOOLEAN DEFAULT FALSE;
-            EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+            CREATE TABLE IF NOT EXISTS category_settings (
+                category TEXT PRIMARY KEY,
+                template_name TEXT DEFAULT 'template1',
+                branding TEXT,
+                buttons JSONB DEFAULT '[]',
+                caption_template TEXT,
+                thumbnail_url TEXT,
+                font_style TEXT DEFAULT 'normal',
+                logo_file_id TEXT,
+                logo_position TEXT DEFAULT 'bottom',
+                watermark_text TEXT,
+                watermark_position TEXT DEFAULT 'bottom-right'
+            )
         """)
 
-    logger.info("✅ DB migration complete")
+        # Auto‑forward connections
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS auto_forward_connections (
+                id SERIAL PRIMARY KEY,
+                source_chat_id BIGINT NOT NULL,
+                source_chat_username TEXT,
+                target_chat_id BIGINT NOT NULL,
+                active BOOLEAN DEFAULT TRUE,
+                delay_seconds INT DEFAULT 0,
+                protect_content BOOLEAN DEFAULT FALSE,
+                silent BOOLEAN DEFAULT FALSE,
+                keep_tag BOOLEAN DEFAULT FALSE,
+                pin_message BOOLEAN DEFAULT FALSE,
+                delete_source BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS auto_forward_filters (
+                id SERIAL PRIMARY KEY,
+                connection_id INT REFERENCES auto_forward_connections(id) ON DELETE CASCADE,
+                allowed_media TEXT[] DEFAULT ARRAY['all'],
+                blacklist TEXT[],
+                whitelist TEXT[]
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS auto_forward_replacements (
+                id SERIAL PRIMARY KEY,
+                connection_id INT REFERENCES auto_forward_connections(id) ON DELETE CASCADE,
+                old_pattern TEXT NOT NULL,
+                new_pattern TEXT NOT NULL
+            )
+        """)
+
+        # Scheduled broadcasts
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS scheduled_broadcasts (
+                id SERIAL PRIMARY KEY,
+                admin_id BIGINT NOT NULL,
+                message_text TEXT,
+                media_file_id TEXT,
+                media_type TEXT,
+                execute_at TIMESTAMP NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS broadcast_history (
+                id SERIAL PRIMARY KEY,
+                admin_id BIGINT NOT NULL,
+                mode VARCHAR(20) NOT NULL,
+                total_users INT NOT NULL,
+                success INT NOT NULL,
+                blocked INT NOT NULL DEFAULT 0,
+                deleted INT NOT NULL DEFAULT 0,
+                failed INT NOT NULL DEFAULT 0,
+                message_text TEXT,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP
+            )
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_status (
+                user_id BIGINT PRIMARY KEY,
+                is_blocked BOOLEAN DEFAULT FALSE,
+                is_deleted BOOLEAN DEFAULT FALSE,
+                last_checked TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Manga auto‑update
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS manga_auto_update (
+                id SERIAL PRIMARY KEY,
+                manga_title TEXT NOT NULL,
+                manga_id TEXT,
+                source_api TEXT DEFAULT 'mangadex',
+                last_chapter TEXT,
+                last_checked TIMESTAMP,
+                target_chat_id BIGINT NOT NULL,
+                active BOOLEAN DEFAULT TRUE,
+                watermark BOOLEAN DEFAULT FALSE,
+                combine_pdf BOOLEAN DEFAULT FALSE
+            )
+        """)
+
+        # Feature flags (for per‑user/group permissions)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS feature_flags (
+                id SERIAL PRIMARY KEY,
+                feature_name TEXT NOT NULL,
+                entity_id BIGINT NOT NULL,          -- user_id or group_id
+                entity_type TEXT NOT NULL,           -- 'user' or 'group'
+                enabled BOOLEAN DEFAULT TRUE,
+                UNIQUE(feature_name, entity_id, entity_type)
+            )
+        """)
+
+        # Posts cache (optional)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS posts_cache (
+                id SERIAL PRIMARY KEY,
+                category TEXT NOT NULL,
+                title TEXT NOT NULL,
+                anilist_id INT,
+                media_data JSONB,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                message_id BIGINT,
+                chat_id BIGINT
+            )
+        """)
+
+        # Auto‑forward state (last forwarded message id)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS auto_forward_state (
+                connection_id INT REFERENCES auto_forward_connections(id) ON DELETE CASCADE,
+                last_message_id BIGINT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (connection_id)
+            )
+        """)
+
+        logger.info("✅ All tables created/verified")
 
 
 # ─────────────────────────────────── SETTINGS ────────────────────────────────
@@ -142,7 +303,6 @@ def is_maintenance_mode() -> bool:
 
 
 def toggle_maintenance_mode() -> bool:
-    """Toggle maintenance mode. Returns the NEW state (True = ON)."""
     new_state = not is_maintenance_mode()
     set_setting("maintenance_mode", "true" if new_state else "false")
     return new_state
@@ -240,6 +400,13 @@ def get_user_info_by_id(user_id):
             FROM users WHERE user_id = %s
         """, (user_id,))
         return cur.fetchone()
+
+
+def delete_user_by_id(user_id: int):
+    with db_manager.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+        cur.execute("DELETE FROM user_status WHERE user_id = %s", (user_id,))
 
 
 # ────────────────────────────── FORCE SUB CHANNELS ───────────────────────────
@@ -399,9 +566,7 @@ def get_links_count(bot_username: str = None) -> int:
     with db_manager.get_connection() as conn:
         cur = conn.cursor()
         if bot_username:
-            cur.execute("""
-                SELECT COUNT(*) FROM generated_links WHERE source_bot_username = %s
-            """, (bot_username,))
+            cur.execute("SELECT COUNT(*) FROM generated_links WHERE source_bot_username = %s", (bot_username,))
         else:
             cur.execute("SELECT COUNT(*) FROM generated_links")
         return cur.fetchone()[0]
@@ -469,7 +634,6 @@ def remove_clone_bot(bot_username: str) -> bool:
 
 
 def get_main_bot_token() -> str:
-    """Returns the stored main bot token so clones can use it for invite links."""
     return get_setting("main_bot_token", "")
 
 
@@ -478,7 +642,6 @@ def set_main_bot_token(token: str):
 
 
 def am_i_a_clone_token(bot_token: str) -> bool:
-    """Returns True if this bot_token is registered as an active clone."""
     try:
         with db_manager.get_connection() as conn:
             cur = conn.cursor()
@@ -500,3 +663,213 @@ def get_clone_bot_by_username(bot_username: str):
             WHERE LOWER(bot_username) = LOWER(%s)
         """, (bot_username.lstrip('@'),))
         return cur.fetchone()
+
+
+# ─────────────────────────────── CATEGORY SETTINGS ───────────────────────────
+
+def get_category_settings(category: str) -> dict:
+    with db_manager.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT template_name, branding, buttons, caption_template,
+                   thumbnail_url, font_style, logo_file_id, logo_position,
+                   watermark_text, watermark_position
+            FROM category_settings WHERE category = %s
+        """, (category,))
+        row = cur.fetchone()
+        if row:
+            return {
+                'template_name': row[0],
+                'branding': row[1],
+                'buttons': json.loads(row[2]) if row[2] else [],
+                'caption_template': row[3],
+                'thumbnail_url': row[4],
+                'font_style': row[5] or 'normal',
+                'logo_file_id': row[6],
+                'logo_position': row[7] or 'bottom',
+                'watermark_text': row[8],
+                'watermark_position': row[9] or 'bottom-right'
+            }
+        else:
+            return {
+                'template_name': 'template1',
+                'branding': '',
+                'buttons': [],
+                'caption_template': '',
+                'thumbnail_url': '',
+                'font_style': 'normal',
+                'logo_file_id': None,
+                'logo_position': 'bottom',
+                'watermark_text': None,
+                'watermark_position': 'bottom-right'
+            }
+
+
+def save_category_settings(category: str, settings: dict):
+    with db_manager.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO category_settings
+                (category, template_name, branding, buttons, caption_template,
+                 thumbnail_url, font_style, logo_file_id, logo_position,
+                 watermark_text, watermark_position)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (category) DO UPDATE SET
+                template_name = EXCLUDED.template_name,
+                branding = EXCLUDED.branding,
+                buttons = EXCLUDED.buttons,
+                caption_template = EXCLUDED.caption_template,
+                thumbnail_url = EXCLUDED.thumbnail_url,
+                font_style = EXCLUDED.font_style,
+                logo_file_id = EXCLUDED.logo_file_id,
+                logo_position = EXCLUDED.logo_position,
+                watermark_text = EXCLUDED.watermark_text,
+                watermark_position = EXCLUDED.watermark_position
+        """, (
+            category,
+            settings.get('template_name', 'template1'),
+            settings.get('branding', ''),
+            json.dumps(settings.get('buttons', [])),
+            settings.get('caption_template', ''),
+            settings.get('thumbnail_url', ''),
+            settings.get('font_style', 'normal'),
+            settings.get('logo_file_id'),
+            settings.get('logo_position', 'bottom'),
+            settings.get('watermark_text'),
+            settings.get('watermark_position', 'bottom-right')
+        ))
+
+
+# ─────────────────────────────── BROADCAST HISTORY ───────────────────────────
+
+def create_broadcast_record(admin_id: int, mode: str, total_users: int) -> int:
+    with db_manager.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO broadcast_history (admin_id, mode, total_users)
+            VALUES (%s, %s, %s) RETURNING id
+        """, (admin_id, mode, total_users))
+        return cur.fetchone()[0]
+
+
+def update_broadcast_stats(broadcast_id: int, success: int, failed: int, blocked: int, deleted: int):
+    with db_manager.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE broadcast_history
+            SET success = %s, failed = %s, blocked = %s, deleted = %s, completed_at = NOW()
+            WHERE id = %s
+        """, (success, failed, blocked, deleted, broadcast_id))
+
+
+def get_broadcast_history(limit: int = 10):
+    with db_manager.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, admin_id, mode, total_users, success, blocked, deleted, failed, started_at, completed_at
+            FROM broadcast_history
+            ORDER BY started_at DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+        return [
+            {
+                'id': r[0], 'admin_id': r[1], 'mode': r[2], 'total_users': r[3],
+                'success': r[4], 'blocked': r[5], 'deleted': r[6], 'failed': r[7],
+                'started_at': r[8], 'completed_at': r[9]
+            } for r in rows
+        ]
+
+
+# ─────────────────────────────── USER STATUS ─────────────────────────────────
+
+def mark_user_blocked(user_id: int):
+    with db_manager.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO user_status (user_id, is_blocked, last_checked)
+            VALUES (%s, TRUE, NOW())
+            ON CONFLICT (user_id) DO UPDATE SET is_blocked = TRUE, last_checked = NOW()
+        """, (user_id,))
+
+
+def mark_user_deleted(user_id: int):
+    with db_manager.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO user_status (user_id, is_deleted, last_checked)
+            VALUES (%s, TRUE, NOW())
+            ON CONFLICT (user_id) DO UPDATE SET is_deleted = TRUE, last_checked = NOW()
+        """, (user_id,))
+
+
+def get_blocked_users_count() -> int:
+    with db_manager.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM user_status WHERE is_blocked = TRUE")
+        return cur.fetchone()[0]
+
+
+# ─────────────────────────────── FEATURE FLAGS ───────────────────────────────
+
+def feature_enabled(feature: str, entity_id: int, entity_type: str = 'user') -> bool:
+    """Check if a feature is enabled for a given user/group."""
+    with db_manager.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT enabled FROM feature_flags
+            WHERE feature_name = %s AND entity_id = %s AND entity_type = %s
+        """, (feature, entity_id, entity_type))
+        row = cur.fetchone()
+        if row:
+            return row[0]
+        # If not set, default to True (or you could return False)
+        return True
+
+
+def set_feature(feature: str, entity_id: int, entity_type: str, enabled: bool):
+    with db_manager.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO feature_flags (feature_name, entity_id, entity_type, enabled)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (feature_name, entity_id, entity_type)
+            DO UPDATE SET enabled = EXCLUDED.enabled
+        """, (feature, entity_id, entity_type, enabled))
+
+
+# ─────────────────────────────── AUTO-FORWARD ────────────────────────────────
+
+def add_auto_forward_connection(source_chat_id: int, target_chat_id: int,
+                                source_username: str = None, delay: int = 0,
+                                protect: bool = False, silent: bool = False,
+                                keep_tag: bool = False, pin: bool = False,
+                                delete_src: bool = False) -> int:
+    with db_manager.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO auto_forward_connections
+                (source_chat_id, source_chat_username, target_chat_id,
+                 delay_seconds, protect_content, silent, keep_tag,
+                 pin_message, delete_source)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (source_chat_id, source_username, target_chat_id,
+              delay, protect, silent, keep_tag, pin, delete_src))
+        return cur.fetchone()[0]
+
+
+def get_auto_forward_connections(active_only: bool = True):
+    with db_manager.get_connection() as conn:
+        cur = conn.cursor()
+        if active_only:
+            cur.execute("SELECT * FROM auto_forward_connections WHERE active = TRUE")
+        else:
+            cur.execute("SELECT * FROM auto_forward_connections")
+        return cur.fetchall()
+
+
+def delete_auto_forward_connection(conn_id: int):
+    with db_manager.get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM auto_forward_connections WHERE id = %s", (conn_id,))
