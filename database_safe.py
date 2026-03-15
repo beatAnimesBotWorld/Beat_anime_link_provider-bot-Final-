@@ -468,6 +468,29 @@ def remove_clone_bot(bot_username: str) -> bool:
         return False
 
 
+def get_main_bot_token() -> str:
+    """Returns the stored main bot token so clones can use it for invite links."""
+    return get_setting("main_bot_token", "")
+
+
+def set_main_bot_token(token: str):
+    set_setting("main_bot_token", token)
+
+
+def am_i_a_clone_token(bot_token: str) -> bool:
+    """Returns True if this bot_token is registered as an active clone."""
+    try:
+        with db_manager.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT 1 FROM clone_bots WHERE bot_token = %s AND is_active = TRUE",
+                (bot_token,)
+            )
+            return cur.fetchone() is not None
+    except Exception:
+        return False
+
+
 def get_clone_bot_by_username(bot_username: str):
     with db_manager.get_connection() as conn:
         cur = conn.cursor()
