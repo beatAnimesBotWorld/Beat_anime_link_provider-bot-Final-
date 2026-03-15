@@ -178,7 +178,7 @@ def force_sub_required(func):
                 if jbr:
                     btn_label = f"📨 Request to Join — {title}"
                 else:
-                    btn_label = f"✅ Join — {title}"
+                    btn_label = f"{title}"
                 keyboard.append([InlineKeyboardButton(btn_label, url=f"https://t.me/{clean}")])
                 lines.append(f"• <b>{title}</b> (<code>{uname}</code>)")
 
@@ -1111,7 +1111,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         msg = await context.bot.send_message(
             query.message.chat_id,
-            "📣 Send the message to broadcast (text, photo, video, etc.):",
+            "<blockquote><b>📣 Send the message to broadcast (text, photo, video, etc.):</b></blockquote>",.
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("🔙 CANCEL", callback_data="admin_back")
@@ -1283,7 +1283,7 @@ async def handle_channel_link_deep(update: Update, context: ContextTypes.DEFAULT
         await context.bot.send_message(
             chat_id,
             "<b>ʜᴇʀᴇ ɪs ʏᴏᴜʀ ʟɪɴᴋ! ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ᴛᴏ ᴘʀᴏᴄᴇᴇᴅ</b>\n\n"
-            "<blockquote><b><u>If the link expires, tap the original post link again to get a fresh one.</u></b></blockquote>",
+            "<blockquote><b><u>Note:If the link expires, tap the original post link again to get a fresh one.</u></b></blockquote>",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -1656,7 +1656,7 @@ async def post_init(application):
             pass
         # Don't remove the file here — main() still needs it for menu redirect
 
-    restart_text = f"Bᴏᴛ Rᴇsᴛᴀʀᴛᴇᴅ ʙʏ @{triggered_by}"
+    restart_text = f"<blockquote><b>Bᴏᴛ Rᴇsᴛᴀʀᴛᴇᴅ ʙʏ @{triggered_by}</b></blockquote>"
     try:
         await application.bot.send_message(
             chat_id=ADMIN_ID,
