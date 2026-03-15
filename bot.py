@@ -42,8 +42,9 @@ PUBLIC_ANIME_CHANNEL_URL  = "https://t.me/BeatAnime"
 REQUEST_CHANNEL_URL       = "https://t.me/Beat_Hindi_Dubbed"
 ADMIN_CONTACT_USERNAME    = "Beat_Anime_Ocean"
 
-# Current bot username (resolved at startup)
+# Current bot username & clone flag (resolved at startup)
 BOT_USERNAME: str = ""
+I_AM_CLONE:   bool = False   # True if this bot's token is in clone_bots table
 
 # ─────────────────────────────────── STATES ──────────────────────────────────
 
@@ -69,6 +70,7 @@ async def _send_maintenance_block(update: Update, context: ContextTypes.DEFAULT_
     text = (
         "🔧 <b>Bot Under Maintenance</b>\n\n"
         "<blockquote><b>We are currently performing scheduled maintenance.</b>\n"
+        "<b>Existing members can still use the bot normally.</b>\n"
         "<b>New registrations are temporarily paused.</b></blockquote>\n\n"
         "<b>Please join our backup channel to stay updated.</b>"
     )
@@ -125,8 +127,9 @@ async def is_user_subscribed(user_id: int, bot) -> bool:
             if member.status in ['left', 'kicked']:
                 return False
         except Exception as e:
-            logger.error(f"Error checking {ch} for {user_id}: {e}")
-            return False
+            # Bot is not admin in this channel (e.g. on a clone bot).
+            # Treat as subscribed so users are not wrongly blocked.
+            logger.warning(f"Cannot check membership in {ch} (bot not admin?): {e}")
     return True
 
 
@@ -551,19 +554,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         link_id = context.args[0]
 
         # ── Clone redirect ────────────────────────────────────────────────
-        # Only redirects from the MAIN bot (not from clones themselves).
-        # Clones share the same DB so clone_redirect_enabled is true for them too —
-        # we prevent the infinite loop by checking if THIS bot is registered as a clone.
+        # I_AM_CLONE is set at startup by matching BOT_TOKEN against clone_bots.
+        # Only the main bot redirects; clone bots serve the link directly.
         clone_redirect = get_setting("clone_redirect_enabled", "false").lower() == "true"
-        i_am_a_clone   = get_clone_bot_by_username(BOT_USERNAME) is not None
-        if clone_redirect and not i_am_a_clone and user.id != ADMIN_ID:
+        if clone_redirect and not I_AM_CLONE and user.id != ADMIN_ID:
             clones = get_all_clone_bots(active_only=True)
-            # Pick first clone that isn't this bot itself
-            target_clone = next(
-                (c for c in clones if c[2].lower() != BOT_USERNAME.lower()), None
-            )
-            if target_clone:
-                clone_uname = target_clone[2]
+            if clones:
+                clone_uname = clones[0][2]  # first active clone username
                 clone_link  = f"https://t.me/{clone_uname}?start={link_id}"
                 await context.bot.send_message(
                     update.effective_chat.id,
@@ -1242,9 +1239,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_channel_link_deep(update: Update, context: ContextTypes.DEFAULT_TYPE,
                                    link_id: str):
+    chat_id   = update.effective_chat.id
     link_info = get_link_info(link_id)
     if not link_info:
-        await update.message.reply_text("❌ <b>This link is invalid or not registered.</b>", parse_mode='HTML')
+        await context.bot.send_message(chat_id, "❌ <b>This link is invalid or not registered.</b>", parse_mode='HTML')
         return
 
     channel_identifier, creator_id, created_time, never_expires = link_info
@@ -1255,16 +1253,33 @@ async def handle_channel_link_deep(update: Update, context: ContextTypes.DEFAULT
         if not never_expires:
             created_dt = datetime.fromisoformat(str(created_time))
             if datetime.now() > created_dt + timedelta(minutes=LINK_EXPIRY_MINUTES):
-                await update.message.reply_text("❌ <b>This link has expired.</b>", parse_mode='HTML')
+                await context.bot.send_message(chat_id, "❌ <b>This link has expired.</b>", parse_mode='HTML')
                 return
 
-        chat        = await context.bot.get_chat(channel_identifier)
-        invite_link = await context.bot.create_chat_invite_link(
+        # Clone bots are NOT required to be admin in channels.
+        # They use the main bot's token (saved in DB) to create the invite link,
+        # then send it to the user via the clone bot's own send_message.
+        if I_AM_CLONE:
+            main_token = get_main_bot_token()
+            if not main_token:
+                await context.bot.send_message(
+                    chat_id,
+                    "❌ <b>Main bot token not configured yet. Please contact admin.</b>",
+                    parse_mode='HTML'
+                )
+                return
+            link_creator = Bot(token=main_token)
+        else:
+            link_creator = context.bot
+
+        chat        = await link_creator.get_chat(channel_identifier)
+        invite_link = await link_creator.create_chat_invite_link(
             chat.id,
             expire_date=datetime.now().timestamp() + LINK_EXPIRY_MINUTES * 60
         )
         keyboard = [[InlineKeyboardButton("• 𝗝𝗢𝗜𝗡 𝗖𝗛𝗔𝗡𝗡𝗘𝗟 •", url=invite_link.invite_link)]]
-        await update.message.reply_text(
+        await context.bot.send_message(
+            chat_id,
             "<b>ʜᴇʀᴇ ɪs ʏᴏᴜʀ ʟɪɴᴋ! ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ᴛᴏ ᴘʀᴏᴄᴇᴇᴅ</b>\n\n"
             "<blockquote><b><u>If the link expires, tap the original post link again to get a fresh one.</u></b></blockquote>",
             parse_mode='HTML',
@@ -1272,7 +1287,7 @@ async def handle_channel_link_deep(update: Update, context: ContextTypes.DEFAULT
         )
     except Exception as e:
         logger.error(f"Error generating invite link: {e}")
-        await update.message.reply_text("❌ <b>Error creating link. Contact admin.</b>", parse_mode='HTML')
+        await context.bot.send_message(chat_id, "❌ <b>Error creating link. Contact admin.</b>", parse_mode='HTML')
 
 # ─────────────────────────── ADMIN PANEL VIEWS ───────────────────────────────
 
@@ -1607,10 +1622,20 @@ async def cleanup_task(context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────── LIFECYCLE ───────────────────────────────────────
 
 async def post_init(application):
-    global BOT_USERNAME
+    global BOT_USERNAME, I_AM_CLONE
     me           = await application.bot.get_me()
     BOT_USERNAME = me.username
-    logger.info(f"✅ Bot identified as @{BOT_USERNAME}")
+    # Detect if this deployment is a clone by matching its token in the clone_bots table
+    try:
+        I_AM_CLONE = am_i_a_clone_token(BOT_TOKEN)
+    except Exception:
+        I_AM_CLONE = False
+    if not I_AM_CLONE:
+        # Main bot saves its own token to DB so clones can use it for invite link creation
+        set_main_bot_token(BOT_TOKEN)
+        logger.info("✅ Main bot token saved to DB")
+    role = "CLONE" if I_AM_CLONE else "MAIN"
+    logger.info(f"✅ Bot identified as @{BOT_USERNAME} [{role}]")
     await health_server.start()
     logger.info("✅ Health check server started")
 
