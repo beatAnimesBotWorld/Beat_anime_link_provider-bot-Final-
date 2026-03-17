@@ -229,7 +229,7 @@ class BroadcastMode:
 # ================================================================================
 
 def small_caps(text: str) -> str:
-    """Convert ASCII text to Unicode small caps."""
+    """Convert ASCII text to Unicode small caps, preserving HTML tags intact."""
     mapping = {
         'a': 'ᴀ', 'b': 'ʙ', 'c': 'ᴄ', 'd': 'ᴅ', 'e': 'ᴇ',
         'f': 'ғ', 'g': 'ɢ', 'h': 'ʜ', 'i': 'ɪ', 'j': 'ᴊ',
@@ -244,7 +244,20 @@ def small_caps(text: str) -> str:
         'U': 'ᴜ', 'V': 'ᴠ', 'W': 'ᴡ', 'X': 'x', 'Y': 'ʏ',
         'Z': 'ᴢ',
     }
-    return ''.join(mapping.get(ch, ch) for ch in text)
+    result = []
+    inside_tag = False
+    for ch in text:
+        if ch == '<':
+            inside_tag = True
+            result.append(ch)
+        elif ch == '>':
+            inside_tag = False
+            result.append(ch)
+        elif inside_tag:
+            result.append(ch)
+        else:
+            result.append(mapping.get(ch, ch))
+    return ''.join(result)
 
 # ================================================================================
 #                      BOLD MATHEMATICAL CONVERSION
@@ -289,10 +302,16 @@ async def loading_animation(
 ) -> Optional[int]:
     """Send a loading message with increasing exclamation marks, then delete it."""
     try:
-        msg = await context.bot.send_message(chat_id, "!")
-        for i in range(2, 5):
-            await asyncio.sleep(0.3)
-            await msg.edit_text("!" * i)
+        frames = [
+            math_bold("!"),
+            math_bold("!!"),
+            math_bold("!!!"),
+            math_bold("!!!!"),
+        ]
+        msg = await context.bot.send_message(chat_id, frames[0])
+        for frame in frames[1:]:
+            await asyncio.sleep(0.45)
+            await msg.edit_text(frame)
         await asyncio.sleep(duration)
         await msg.delete()
         return msg.message_id
@@ -485,10 +504,10 @@ def force_sub_required(func):
 
             # Compose the message exactly as in your screenshot
             text = (
-                f"⚠️ <b>Hey, {user_name} ×</b> 💬\n\n"
-                f"<b>YOU HAVEN'T JOINED {unjoined}/{total_channels} CHANNELS YET. "
-                f"PLEASE JOIN THE CHANNELS PROVIDED BELOW, THEN TRY AGAIN.. !</b>\n\n"
-                f"❗ <b>FACING PROBLEMS, USE:</b> /help"
+                f"⚠️ <b>ʜᴇʏ, {user_name} ×</b> 💬\n\n"
+                f"<b>ʏᴏᴜ ʜᴀᴠᴇɴ'ᴛ ᴊᴏɪɴᴇᴅ {unjoined}/{total_channels} ᴄʜᴀɴɴᴇʟs ʏᴇᴛ. "
+                f"ᴘʟᴇᴀsᴇ ᴊᴏɪɴ ᴛʜᴇ ᴄʜᴀɴɴᴇʟs ᴘʀᴏᴠɪᴅᴇᴅ ʙᴇʟᴏᴡ, ᴛʜᴇɴ ᴛʀʏ ᴀɢᴀɪɴ.. !</b>\n\n"
+                f"❗ <b>ғᴀᴄɪɴɢ ᴘʀᴏʙʟᴇᴍs, ᴜᴀɢᴇ:</b> /help"
             )
 
             if update.message:
@@ -901,9 +920,6 @@ async def fetch_media_and_generate_post(
     await delete_update_message(update, context)
     user_states.pop(update.effective_user.id, None)
     await delete_bot_prompt(context, update.effective_chat.id)
-
-    # Show loading animation
-    await loading_animation(update, context, update.effective_chat.id)
 
     # Fetch data
     data = None
@@ -2000,8 +2016,6 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(small_caps("Usage: /search <name>"))
         return
     query = ' '.join(context.args)
-    await loading_animation(update, context, update.effective_chat.id)
-
     anime = AniListClient.search_anime(query)
     manga = AniListClient.search_manga(query)
 
@@ -2162,7 +2176,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 clone_link = f"https://t.me/{clone_uname}?start={link_id}"
                 await context.bot.send_message(
                     chat_id,
-                    small_caps("Getting your link…"),
+                    "<b>ɢᴇᴛᴛɪɴɢ ʏᴏᴜʀ ʟɪɴᴋ…</b>",
                     parse_mode='HTML',
                     reply_markup=InlineKeyboardMarkup([[
                         bold_button("• Get Link •", url=clone_link)
@@ -2197,7 +2211,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Error copying welcome message: {e}")
             await context.bot.send_message(
                 chat_id,
-                small_caps("Welcome to the bot!"),
+                "<b>ᴡᴇʟᴄᴏᴍᴇ ᴛᴏ ᴛʜᴇ ʙᴏᴛ!</b>",
                 parse_mode='HTML',
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
@@ -2277,15 +2291,15 @@ async def send_admin_stats(query: CallbackQuery, context: ContextTypes.DEFAULT_T
     clones = get_all_clone_bots(active_only=True)
     blocked_users = get_blocked_users_count()
 
-    stats_text = small_caps(
-        "<b>BOT STATISTICS</b>\n\n"
-        f"<b>Total Users: {user_count}</b>\n"
-        f"<b>Force‑Sub Channels: {channel_count}</b>\n"
-        f"<b>Total Links: {link_count}</b>\n"
-        f"<b>Active Clones: {len(clones)}</b>\n"
-        f"<b>Blocked Users: {blocked_users}</b>\n"
-        f"<b>Maintenance: {maint}</b>\n"
-        f"<b>Link Expiry: {LINK_EXPIRY_MINUTES} min</b>"
+    stats_text = (
+        "<b>ʙᴏᴛ sᴛᴀᴛɪsᴛɪᴄs</b>\n\n"
+        f"<b>ᴛᴏᴛᴀʟ ᴜsᴇʀs: {user_count}</b>\n"
+        f"<b>ғᴏʀᴄᴇ‑sᴜʙ ᴄʜᴀɴɴᴇʟs: {channel_count}</b>\n"
+        f"<b>ᴛᴏᴛᴀʟ ʟɪɴᴋs: {link_count}</b>\n"
+        f"<b>ᴀᴄᴛɪᴠᴇ ᴄʟᴏɴᴇs: {len(clones)}</b>\n"
+        f"<b>ʙʟᴏᴄᴋᴇᴅ ᴜsᴇʀs: {blocked_users}</b>\n"
+        f"<b>ᴍᴀɪɴᴛᴇɴᴀɴᴄᴇ: {maint}</b>\n"
+        f"<b>ʟɪɴᴋ ᴇxᴘɪʀʏ: {LINK_EXPIRY_MINUTES} ᴍɪɴ</b>"
     )
     keyboard = [
         [bold_button(" ♻️ REFRESH", callback_data="admin_stats")],
@@ -2356,7 +2370,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # About bot
     if data == "about_bot":
-        about_text = small_caps("About Us\n\nDeveloped by @Beat_Anime_Ocean")
+        about_text = (
+            "<blockquote>"
+            "ᴀʙᴏᴜᴛ ᴜs\n\n"
+            "ᴅᴇᴠᴇʟᴏᴘᴇᴅ ʙʏ @Beat_Anime_Ocean"
+            "</blockquote>"
+        )
         try:
             await query.delete_message()
         except Exception:
@@ -4735,6 +4754,13 @@ async def scheduled_broadcast_worker(context: ContextTypes.DEFAULT_TYPE):
 #                           LIFECYCLE FUNCTIONS
 # ================================================================================
 
+async def cleanup_expired_links_job(context: ContextTypes.DEFAULT_TYPE):
+    """PTB job wrapper for the synchronous cleanup_expired_links DB function."""
+    try:
+        cleanup_expired_links()
+    except Exception as e:
+        logger.error(f"cleanup_expired_links_job error: {e}")
+
 async def post_init(application: Application):
     global BOT_USERNAME, I_AM_CLONE
     me = await application.bot.get_me()
@@ -4757,7 +4783,7 @@ async def post_init(application: Application):
         # Auto-forward periodic check (optional, we already have event-driven)
         # application.job_queue.run_repeating(auto_forward_job, interval=60, first=10)
         application.job_queue.run_repeating(manga_update_job, interval=3600, first=60)
-        application.job_queue.run_repeating(cleanup_expired_links, interval=600, first=30)
+        application.job_queue.run_repeating(cleanup_expired_links_job, interval=600, first=30)
         application.job_queue.run_repeating(check_scheduled_broadcasts, interval=60, first=30)
 
     # Send restart notification with timestamp
@@ -4792,6 +4818,10 @@ async def post_shutdown(application: Application):
 #                           ERROR HANDLER
 # ================================================================================
 
+# Track error DM count per bot session (reset on restart)
+_error_dm_counts: dict = {}
+ERROR_DM_MAX = 3
+
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     error_logger.error(f"Exception while handling an update: {context.error}", exc_info=True)
 
@@ -4804,14 +4834,22 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except:
             pass
-    try:
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=error_text,
-            parse_mode='HTML'
-        )
-    except Exception:
-        pass
+
+    # Limit error DMs to admin to prevent spam (max ERROR_DM_MAX per update_id)
+    error_dms_enabled = get_setting("error_dms_enabled", "1") != "0"
+    if error_dms_enabled:
+        update_key = getattr(update, 'update_id', 'global') if update else 'global'
+        count = _error_dm_counts.get(update_key, 0)
+        if count < ERROR_DM_MAX:
+            _error_dm_counts[update_key] = count + 1
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=error_text,
+                    parse_mode='HTML'
+                )
+            except Exception:
+                pass
 
 # ================================================================================
 #                                   MAIN
