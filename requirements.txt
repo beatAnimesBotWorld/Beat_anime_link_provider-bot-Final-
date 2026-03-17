@@ -5,5 +5,5 @@ python-dotenv==1.0.1
 requests==2.32.3
 psutil==6.1.0
 aiofiles==23.2.1
-Pillow==10.1.0
+Pillow==11.1.0
 img2pdf==0.6.0
