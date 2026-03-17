@@ -246,6 +246,37 @@ def small_caps(text: str) -> str:
     return ''.join(mapping.get(ch, ch) for ch in text)
 
 # ================================================================================
+#                      BOLD MATHEMATICAL CONVERSION
+# ================================================================================
+
+def math_bold(text: str) -> str:
+    """
+    Convert ASCII text to Unicode mathematical bold.
+    Example: "MODE" -> "𝗠𝗢𝗗𝗘"
+    """
+    mapping = {
+        'A': '𝗔', 'B': '𝗕', 'C': '𝗖', 'D': '𝗗', 'E': '𝗘',
+        'F': '𝗙', 'G': '𝗚', 'H': '𝗛', 'I': '𝗜', 'J': '𝗝',
+        'K': '𝗞', 'L': '𝗟', 'M': '𝗠', 'N': '𝗡', 'O': '𝗢',
+        'P': '𝗣', 'Q': '𝗤', 'R': '𝗥', 'S': '𝗦', 'T': '𝗧',
+        'U': '𝗨', 'V': '𝗩', 'W': '𝗪', 'X': '𝗫', 'Y': '𝗬',
+        'Z': '𝗭',
+        'a': '𝗮', 'b': '𝗯', 'c': '𝗰', 'd': '𝗱', 'e': '𝗲',
+        'f': '𝗳', 'g': '𝗴', 'h': '𝗵', 'i': '𝗶', 'j': '𝗷',
+        'k': '𝗸', 'l': '𝗹', 'm': '𝗺', 'n': '𝗻', 'o': '𝗼',
+        'p': '𝗽', 'q': '𝗾', 'r': '𝗿', 's': '𝘀', 't': '𝘁',
+        'u': '𝘂', 'v': '𝘃', 'w': '𝘄', 'x': '𝘅', 'y': '𝘆',
+        'z': '𝘇',
+        '0': '𝟬', '1': '𝟭', '2': '𝟮', '3': '𝟯', '4': '𝟰',
+        '5': '𝟱', '6': '𝟲', '7': '𝟳', '8': '𝟴', '9': '𝟵',
+    }
+    return ''.join(mapping.get(ch, ch) for ch in text)
+
+def bold_button(text, **kwargs):
+    """Create an InlineKeyboardButton with mathematical bold text."""
+    return InlineKeyboardButton(math_bold(text), **kwargs)
+
+# ================================================================================
 #                          LOADING ANIMATION
 # ================================================================================
 
@@ -283,7 +314,7 @@ async def _send_maintenance_block(update: Update, context: ContextTypes.DEFAULT_
     )
     keyboard = []
     if backup_url:
-        keyboard.append([InlineKeyboardButton(" Backup Channel", url=backup_url)])
+        keyboard.append([bold_button(" Backup Channel", url=backup_url)])
 
     if update.message:
         await update.message.reply_text(
@@ -419,10 +450,10 @@ def force_sub_required(func):
                     btn_label = f"📨 Request to Join — {title}"
                 else:
                     btn_label = f"{title}"
-                keyboard.append([InlineKeyboardButton(btn_label, url=f"https://t.me/{clean}")])
+                keyboard.append([bold_button(btn_label, url=f"https://t.me/{clean}")])
                 lines.append(f"• <b>{title}</b> (<code>{uname}</code>)")
 
-            keyboard.append([InlineKeyboardButton("♻️ Verify", callback_data="verify_subscription")])
+            keyboard.append([bold_button("♻️ Verify", callback_data="verify_subscription")])
             channels_text = "\n".join(lines)
             text = (
                 "<b>Join our channels to use this bot:</b>\n\n"
@@ -558,7 +589,7 @@ async def sysstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Free Tier: {'Yes' if render['free_tier'] else 'No'}\n\n"
         f"Note: Bandwidth information is not available via public API."
     )
-    keyboard = [[InlineKeyboardButton("🔙 BACK", callback_data="admin_back")]]
+    keyboard = [[bold_button("🔙 BACK", callback_data="admin_back")]]
     await update.message.reply_text(
         text,
         parse_mode='HTML',
@@ -949,7 +980,7 @@ async def fetch_media_and_generate_post(
         elif text.startswith('#p '):
             text = '🔵 ' + text[3:]
         if url:
-            keyboard.append([InlineKeyboardButton(text, url=url)])
+            keyboard.append([bold_button(text, url=url)])
 
     # Append branding if set
     branding = settings.get('branding', '')
@@ -1154,11 +1185,11 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_bot_prompt(context, update.effective_chat.id)
 
     keyboard = [
-        [InlineKeyboardButton(" TV Shows", callback_data="settings_category_tvshow"),
-         InlineKeyboardButton(" Movies", callback_data="settings_category_movie")],
-        [InlineKeyboardButton(" Anime", callback_data="settings_category_anime"),
-         InlineKeyboardButton(" Manga", callback_data="settings_category_manga")],
-        [InlineKeyboardButton("🔙 BACK", callback_data="admin_back")]
+        [bold_button(" TV Shows", callback_data="settings_category_tvshow"),
+         bold_button(" Movies", callback_data="settings_category_movie")],
+        [bold_button(" Anime", callback_data="settings_category_anime"),
+         bold_button(" Manga", callback_data="settings_category_manga")],
+        [bold_button("🔙 BACK", callback_data="admin_back")]
     ]
     text = small_caps("Select category to configure:")
     if SETTINGS_IMAGE_URL:
@@ -1201,15 +1232,15 @@ async def show_category_settings(update: Update, context: ContextTypes.DEFAULT_T
         f"• Logo: {'Set' if settings['logo_file_id'] else 'Not set'} (position: {settings['logo_position']})"
     )
     keyboard = [
-        [InlineKeyboardButton(" Set Template", callback_data=f"set_template_{category}"),
-         InlineKeyboardButton("🏷 Set Branding", callback_data=f"set_branding_{category}")],
-        [InlineKeyboardButton(" Configure Buttons", callback_data=f"set_buttons_{category}"),
-         InlineKeyboardButton(" Set Caption", callback_data=f"set_caption_{category}")],
-        [InlineKeyboardButton(" Set Thumbnail", callback_data=f"set_thumbnail_{category}"),
-         InlineKeyboardButton(" Font Style", callback_data=f"set_font_{category}")],
-        [InlineKeyboardButton(" Set Logo", callback_data=f"set_logo_{category}"),
-         InlineKeyboardButton(" Logo Position", callback_data=f"set_logo_pos_{category}")],
-        [InlineKeyboardButton("🔙 BACK", callback_data="admin_back")]
+        [bold_button(" Set Template", callback_data=f"set_template_{category}"),
+         bold_button("🏷 Set Branding", callback_data=f"set_branding_{category}")],
+        [bold_button(" Configure Buttons", callback_data=f"set_buttons_{category}"),
+         bold_button(" Set Caption", callback_data=f"set_caption_{category}")],
+        [bold_button(" Set Thumbnail", callback_data=f"set_thumbnail_{category}"),
+         bold_button(" Font Style", callback_data=f"set_font_{category}")],
+        [bold_button(" Set Logo", callback_data=f"set_logo_{category}"),
+         bold_button(" Logo Position", callback_data=f"set_logo_pos_{category}")],
+        [bold_button("🔙 BACK", callback_data="admin_back")]
     ]
     try:
         await query.edit_message_text(
@@ -1249,14 +1280,14 @@ async def autoforward_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"ACTIVE CONNECTIONS: {active_count}"
     )
     keyboard = [
-        [InlineKeyboardButton("➕ Add Connection", callback_data="af_add_connection")],
-        [InlineKeyboardButton(" Manage Connections", callback_data="af_manage_connections"),
-         InlineKeyboardButton("⚙️ Settings", callback_data="af_settings")],
-        [InlineKeyboardButton(" Filters/Words", callback_data="af_filters"),
-         InlineKeyboardButton("♻️ Replacements", callback_data="af_replacements")],
-        [InlineKeyboardButton("⏱ Delay/Caption", callback_data="af_delay_caption"),
-         InlineKeyboardButton(" Bulk Forward Old Posts", callback_data="af_bulk")],
-        [InlineKeyboardButton("🔙 BACK", callback_data="admin_back")]
+        [bold_button("➕ Add Connection", callback_data="af_add_connection")],
+        [bold_button(" Manage Connections", callback_data="af_manage_connections"),
+         bold_button("⚙️ Settings", callback_data="af_settings")],
+        [bold_button(" Filters/Words", callback_data="af_filters"),
+         bold_button("♻️ Replacements", callback_data="af_replacements")],
+        [bold_button("⏱ Delay/Caption", callback_data="af_delay_caption"),
+         bold_button(" Bulk Forward Old Posts", callback_data="af_bulk")],
+        [bold_button("🔙 BACK", callback_data="admin_back")]
     ]
     await context.bot.send_message(
         update.effective_chat.id,
@@ -1459,10 +1490,10 @@ async def autoupdate_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     text = small_caps("AUTO MANGA UPDATE\n\nManage manga titles to auto‑post new chapters.")
     keyboard = [
-        [InlineKeyboardButton("➕ Add Manga", callback_data="manga_add")],
-        [InlineKeyboardButton(" List Manga", callback_data="manga_list"),
-         InlineKeyboardButton("🗑 Remove Manga", callback_data="manga_remove")],
-        [InlineKeyboardButton("🔙 BACK", callback_data="admin_back")]
+        [bold_button("➕ Add Manga", callback_data="manga_add")],
+        [bold_button(" List Manga", callback_data="manga_list"),
+         bold_button("🗑 Remove Manga", callback_data="manga_remove")],
+        [bold_button("🔙 BACK", callback_data="admin_back")]
     ]
     await context.bot.send_message(
         update.effective_chat.id,
@@ -1629,7 +1660,7 @@ async def group_message_handler(update: Update, context: ContextTypes.DEFAULT_TY
     cover = data.get('coverImage', {}).get('large')
     description = data.get('description', '')[:200] + '...' if data.get('description') else ''
     caption = f"<b>{title}</b>\n\n{description}"
-    keyboard = [[InlineKeyboardButton("More Info", url=f"https://anilist.co/anime/{data['id']}" if data.get('id') else "")]]
+    keyboard = [[bold_button("More Info", url=f"https://anilist.co/anime/{data['id']}" if data.get('id') else "")]]
     if cover:
         await update.message.reply_photo(
             photo=cover,
@@ -1709,8 +1740,8 @@ async def feature_flags_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     for f in features:
         enabled = feature_enabled(f, 0, 'global')
         status = '✅' if enabled else '❌'
-        keyboard.append([InlineKeyboardButton(f"{status} {f}", callback_data=f"toggle_feature_{f}")])
-    keyboard.append([InlineKeyboardButton("🔙 BACK", callback_data="admin_back")])
+        keyboard.append([bold_button(f"{status} {f}", callback_data=f"toggle_feature_{f}")])
+    keyboard.append([bold_button("🔙 BACK", callback_data="admin_back")])
     await query.edit_message_text(
         text,
         parse_mode='HTML',
@@ -1948,9 +1979,9 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = []
     if anime:
-        keyboard.append([InlineKeyboardButton("Anime", callback_data=f"search_anime_{anime['id']}")])
+        keyboard.append([bold_button("Anime", callback_data=f"search_anime_{anime['id']}")])
     if manga:
-        keyboard.append([InlineKeyboardButton("Manga", callback_data=f"search_manga_{manga['id']}")])
+        keyboard.append([bold_button("Manga", callback_data=f"search_manga_{manga['id']}")])
     await update.message.reply_text(
         small_caps("Found multiple. Choose one:"),
         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -2102,7 +2133,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     small_caps("Getting your link…"),
                     parse_mode='HTML',
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("• Get Link •", url=clone_link)
+                        bold_button("• Get Link •", url=clone_link)
                     ]])
                 )
                 return
@@ -2115,12 +2146,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_admin_menu(chat_id, context)
     else:
         keyboard = [
-            [InlineKeyboardButton("ᴀɴɪᴍᴇ ᴄʜᴀɴɴᴇʟ", url=PUBLIC_ANIME_CHANNEL_URL)],
-            [InlineKeyboardButton("ᴄᴏɴᴛᴀᴄᴛ ᴀᴅᴍɪɴ", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")],
-            [InlineKeyboardButton("ʀᴇǫᴜᴇsᴛ ᴀɴɪᴍᴇ ᴄʜᴀɴɴᴇʟ", url=REQUEST_CHANNEL_URL)],
+            [bold_button("ᴀɴɪᴍᴇ ᴄʜᴀɴɴᴇʟ", url=PUBLIC_ANIME_CHANNEL_URL)],
+            [bold_button("ᴄᴏɴᴛᴀᴄᴛ ᴀᴅᴍɪɴ", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")],
+            [bold_button("ʀᴇǫᴜᴇsᴛ ᴀɴɪᴍᴇ ᴄʜᴀɴɴᴇʟ", url=REQUEST_CHANNEL_URL)],
             [
-                InlineKeyboardButton("ᴀʙᴏᴜᴛ ᴍᴇ", callback_data="about_bot"),
-                InlineKeyboardButton("ᴄʟᴏsᴇ", callback_data="close_message")
+                bold_button("ᴀʙᴏᴜᴛ ᴍᴇ", callback_data="about_bot"),
+                bold_button("ᴄʟᴏsᴇ", callback_data="close_message")
             ]
         ]
         try:
@@ -2158,18 +2189,18 @@ async def send_admin_menu(chat_id: int, context: ContextTypes.DEFAULT_TYPE, quer
     clone_label = "🔀 Clone Redirect: ON" if get_setting("clone_redirect_enabled", "false") == "true" else "🔀 Clone Redirect: OFF"
 
     keyboard = [
-        [InlineKeyboardButton(" BOT STATS", callback_data="admin_stats"),
-         InlineKeyboardButton(" SYSTEM STATS", callback_data="admin_sysstats")],
-        [InlineKeyboardButton(" FORCE‑SUB CHANNELS", callback_data="manage_force_sub"),
-         InlineKeyboardButton("🔗 GENERATE CHANNEL LINK", callback_data="generate_links")],
-        [InlineKeyboardButton(" BROADCAST", callback_data="admin_broadcast_start"),
-         InlineKeyboardButton("👤 USER MANAGEMENT", callback_data="user_management")],
-        [InlineKeyboardButton(" CLONE BOTS", callback_data="manage_clones"),
-         InlineKeyboardButton("⚙️ SETTINGS", callback_data="admin_settings")],
-        [InlineKeyboardButton(" AUTO‑FORWARD", callback_data="admin_autoforward"),
-         InlineKeyboardButton(" AUTO MANGA", callback_data="admin_autoupdate")],
-        [InlineKeyboardButton(" FEATURE FLAGS", callback_data="admin_feature_flags"),
-         InlineKeyboardButton("📤 UPLOAD MANAGER", callback_data="upload_menu")],
+        [bold_button(" BOT STATS", callback_data="admin_stats"),
+         bold_button(" SYSTEM STATS", callback_data="admin_sysstats")],
+        [bold_button(" FORCE‑SUB CHANNELS", callback_data="manage_force_sub"),
+         bold_button("🔗 GENERATE CHANNEL LINK", callback_data="generate_links")],
+        [bold_button(" BROADCAST", callback_data="admin_broadcast_start"),
+         bold_button("👤 USER MANAGEMENT", callback_data="user_management")],
+        [bold_button(" CLONE BOTS", callback_data="manage_clones"),
+         bold_button("⚙️ SETTINGS", callback_data="admin_settings")],
+        [bold_button(" AUTO‑FORWARD", callback_data="admin_autoforward"),
+         bold_button(" AUTO MANGA", callback_data="admin_autoupdate")],
+        [bold_button(" FEATURE FLAGS", callback_data="admin_feature_flags"),
+         bold_button("📤 UPLOAD MANAGER", callback_data="upload_menu")],
     ]
     text = small_caps(
         "ADMIN PANEL\n\n"
@@ -2225,8 +2256,8 @@ async def send_admin_stats(query: CallbackQuery, context: ContextTypes.DEFAULT_T
         f"Link Expiry: {LINK_EXPIRY_MINUTES} min"
     )
     keyboard = [
-        [InlineKeyboardButton(" ♻️ REFRESH", callback_data="admin_stats")],
-        [InlineKeyboardButton("🔙 BACK", callback_data="admin_back")]
+        [bold_button(" ♻️ REFRESH", callback_data="admin_stats")],
+        [bold_button("🔙 BACK", callback_data="admin_back")]
     ]
     if STATS_IMAGE_URL:
         try:
@@ -2303,7 +2334,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             about_text,
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔙 BACK", callback_data="user_back")
+                bold_button("🔙 BACK", callback_data="user_back")
             ]])
         )
         return
@@ -2331,7 +2362,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             small_caps("Send the message you want to broadcast (text, photo, video, etc.)"),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 CANCEL", callback_data="admin_back")
+                bold_button("🔙 CANCEL", callback_data="admin_back")
             ]])
         )
         context.user_data['bot_prompt_message_id'] = prompt.message_id
@@ -2373,7 +2404,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             small_caps(f"Send the new template name for {category}.\n\nCurrent: {settings['template_name']}"),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data=f"settings_category_{category}")
+                bold_button("🔙 Cancel", callback_data=f"settings_category_{category}")
             ]])
         )
         return
@@ -2387,7 +2418,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             small_caps(f"Send the new branding text for {category}.\n\nCurrent: {settings['branding'] or 'Not set'}"),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data=f"settings_category_{category}")
+                bold_button("🔙 Cancel", callback_data=f"settings_category_{category}")
             ]])
         )
         return
@@ -2407,7 +2438,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data=f"settings_category_{category}")
+                bold_button("🔙 Cancel", callback_data=f"settings_category_{category}")
             ]])
         )
         return
@@ -2425,7 +2456,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data=f"settings_category_{category}")
+                bold_button("🔙 Cancel", callback_data=f"settings_category_{category}")
             ]])
         )
         return
@@ -2442,7 +2473,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data=f"settings_category_{category}")
+                bold_button("🔙 Cancel", callback_data=f"settings_category_{category}")
             ]])
         )
         return
@@ -2452,9 +2483,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         settings = get_category_settings(category)
         # 2×2 grid: two font options and back
         keyboard = [
-            [InlineKeyboardButton("Normal", callback_data=f"font_normal_{category}"),
-             InlineKeyboardButton("Small Caps", callback_data=f"font_smallcaps_{category}")],
-            [InlineKeyboardButton("🔙 Back", callback_data=f"settings_category_{category}")]
+            [bold_button("Normal", callback_data=f"font_normal_{category}"),
+             bold_button("Small Caps", callback_data=f"font_smallcaps_{category}")],
+            [bold_button("🔙 Back", callback_data=f"settings_category_{category}")]
         ]
         await query.edit_message_text(
             small_caps(f"Choose font style for {category} (current: {settings['font_style']})"),
@@ -2480,7 +2511,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             small_caps(f"Send an image (photo or document) to set as logo for {category}.\n\nCurrent logo: {'Yes' if settings['logo_file_id'] else 'No'}"),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data=f"settings_category_{category}")
+                bold_button("🔙 Cancel", callback_data=f"settings_category_{category}")
             ]])
         )
         return
@@ -2490,12 +2521,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         settings = get_category_settings(category)
         # 2×2 grid of positions + back
         keyboard = [
-            [InlineKeyboardButton("Top", callback_data=f"logopos_top_{category}"),
-             InlineKeyboardButton("Bottom", callback_data=f"logopos_bottom_{category}")],
-            [InlineKeyboardButton("Left", callback_data=f"logopos_left_{category}"),
-             InlineKeyboardButton("Right", callback_data=f"logopos_right_{category}")],
-            [InlineKeyboardButton("Center", callback_data=f"logopos_center_{category}")],
-            [InlineKeyboardButton("🔙 Back", callback_data=f"settings_category_{category}")]
+            [bold_button("Top", callback_data=f"logopos_top_{category}"),
+             bold_button("Bottom", callback_data=f"logopos_bottom_{category}")],
+            [bold_button("Left", callback_data=f"logopos_left_{category}"),
+             bold_button("Right", callback_data=f"logopos_right_{category}")],
+            [bold_button("Center", callback_data=f"logopos_center_{category}")],
+            [bold_button("🔙 Back", callback_data=f"settings_category_{category}")]
         ]
         await query.edit_message_text(
             small_caps(f"Choose logo position for {category} (current: {settings['logo_position']})"),
@@ -2524,7 +2555,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             small_caps("Send the source channel (forward a message from it, or send its @username / ID)."),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="admin_autoforward")
+                bold_button("🔙 Cancel", callback_data="admin_autoforward")
             ]])
         )
         return
@@ -2535,7 +2566,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 small_caps("No connections yet."),
                 reply_markup=InlineKeyboardMarkup([[  # single back button
-                    InlineKeyboardButton("🔙 Back", callback_data="admin_autoforward")
+                    bold_button("🔙 Back", callback_data="admin_autoforward")
                 ]])
             )
             return
@@ -2545,13 +2576,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         row = []
         for i, c in enumerate(conns):
             btn_text = f"{c[2] or c[1]} → {c[3]}"
-            row.append(InlineKeyboardButton(btn_text, callback_data=f"af_edit_{c[0]}"))
+            row.append(bold_button(btn_text, callback_data=f"af_edit_{c[0]}"))
             if len(row) == 2:
                 keyboard.append(row)
                 row = []
         if row:
             keyboard.append(row)  # leftover single button
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_autoforward")])
+        keyboard.append([bold_button("🔙 Back", callback_data="admin_autoforward")])
         await query.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
@@ -2560,12 +2591,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['af_edit_id'] = conn_id
         # 2×2 grid for connection edit options
         keyboard = [
-            [InlineKeyboardButton("♻️ Toggle Active", callback_data=f"af_toggle_{conn_id}"),
-             InlineKeyboardButton("🗑 Delete", callback_data=f"af_delete_{conn_id}")],
-            [InlineKeyboardButton("🔍 Filters", callback_data=f"af_filters_edit_{conn_id}"),
-             InlineKeyboardButton("♻️ Replacements", callback_data=f"af_replacements_edit_{conn_id}")],
-            [InlineKeyboardButton("⏱ Delay/Caption", callback_data=f"af_delay_edit_{conn_id}")],
-            [InlineKeyboardButton("🔙 Back", callback_data="af_manage_connections")]
+            [bold_button("♻️ Toggle Active", callback_data=f"af_toggle_{conn_id}"),
+             bold_button("🗑 Delete", callback_data=f"af_delete_{conn_id}")],
+            [bold_button("🔍 Filters", callback_data=f"af_filters_edit_{conn_id}"),
+             bold_button("♻️ Replacements", callback_data=f"af_replacements_edit_{conn_id}")],
+            [bold_button("⏱ Delay/Caption", callback_data=f"af_delay_edit_{conn_id}")],
+            [bold_button("🔙 Back", callback_data="af_manage_connections")]
         ]
         await query.edit_message_text(
             small_caps(f"Connection {conn_id}"),
@@ -2611,12 +2642,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         # 2×2 grid for filter actions
         keyboard = [
-            [InlineKeyboardButton(" Set Media Types", callback_data=f"af_set_media_{conn_id}"),
-             InlineKeyboardButton("➕ Add Blacklist", callback_data=f"af_add_bl_{conn_id}")],
-            [InlineKeyboardButton("➕ Add Whitelist", callback_data=f"af_add_wl_{conn_id}"),
-             InlineKeyboardButton("🗑 Clear Blacklist", callback_data=f"af_clear_bl_{conn_id}")],
-            [InlineKeyboardButton("🗑 Clear Whitelist", callback_data=f"af_clear_wl_{conn_id}")],
-            [InlineKeyboardButton("🔙 Back", callback_data=f"af_edit_{conn_id}")]
+            [bold_button(" Set Media Types", callback_data=f"af_set_media_{conn_id}"),
+             bold_button("➕ Add Blacklist", callback_data=f"af_add_bl_{conn_id}")],
+            [bold_button("➕ Add Whitelist", callback_data=f"af_add_wl_{conn_id}"),
+             bold_button("🗑 Clear Blacklist", callback_data=f"af_clear_bl_{conn_id}")],
+            [bold_button("🗑 Clear Whitelist", callback_data=f"af_clear_wl_{conn_id}")],
+            [bold_button("🔙 Back", callback_data=f"af_edit_{conn_id}")]
         ]
         await query.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
         return
@@ -2628,7 +2659,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Send media types separated by commas (e.g., photo, video, document).\nLeave empty to allow all."),
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data=f"af_filters_edit_{conn_id}")
+                bold_button("🔙 Cancel", callback_data=f"af_filters_edit_{conn_id}")
             ]])
         )
         return
@@ -2640,7 +2671,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Send words to add to blacklist, one per line."),
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data=f"af_filters_edit_{conn_id}")
+                bold_button("🔙 Cancel", callback_data=f"af_filters_edit_{conn_id}")
             ]])
         )
         return
@@ -2652,7 +2683,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Send words to add to whitelist, one per line."),
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data=f"af_filters_edit_{conn_id}")
+                bold_button("🔙 Cancel", callback_data=f"af_filters_edit_{conn_id}")
             ]])
         )
         return
@@ -2685,9 +2716,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += "None.\n"
         # 2×2 grid for replacements actions
         keyboard = [
-            [InlineKeyboardButton("➕ Add Replacement", callback_data=f"af_add_rep_{conn_id}"),
-             InlineKeyboardButton("🗑 Clear All", callback_data=f"af_clear_reps_{conn_id}")],
-            [InlineKeyboardButton("🔙 Back", callback_data=f"af_edit_{conn_id}")]
+            [bold_button("➕ Add Replacement", callback_data=f"af_add_rep_{conn_id}"),
+             bold_button("🗑 Clear All", callback_data=f"af_clear_reps_{conn_id}")],
+            [bold_button("🔙 Back", callback_data=f"af_edit_{conn_id}")]
         ]
         await query.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
         return
@@ -2699,7 +2730,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Send replacement in format: OLD_WORD :: NEW_WORD"),
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data=f"af_replacements_edit_{conn_id}")
+                bold_button("🔙 Cancel", callback_data=f"af_replacements_edit_{conn_id}")
             ]])
         )
         return
@@ -2719,7 +2750,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Send new delay in seconds (0 for no delay)."),
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data=f"af_edit_{conn_id}")
+                bold_button("🔙 Cancel", callback_data=f"af_edit_{conn_id}")
             ]])
         )
         return
@@ -2728,7 +2759,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Global auto‑forward settings can be set per connection via edit menu."),
             reply_markup=InlineKeyboardMarkup([[  # single back button
-                InlineKeyboardButton("🔙 Back", callback_data="admin_autoforward")
+                bold_button("🔙 Back", callback_data="admin_autoforward")
             ]])
         )
         return
@@ -2737,7 +2768,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Filters can be set per connection via edit menu."),
             reply_markup=InlineKeyboardMarkup([[  # single back button
-                InlineKeyboardButton("🔙 Back", callback_data="admin_autoforward")
+                bold_button("🔙 Back", callback_data="admin_autoforward")
             ]])
         )
         return
@@ -2746,7 +2777,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Replacements can be set per connection via edit menu."),
             reply_markup=InlineKeyboardMarkup([[  # single back button
-                InlineKeyboardButton("🔙 Back", callback_data="admin_autoforward")
+                bold_button("🔙 Back", callback_data="admin_autoforward")
             ]])
         )
         return
@@ -2755,7 +2786,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Delay and caption settings can be set per connection via edit menu."),
             reply_markup=InlineKeyboardMarkup([[  # single back button
-                InlineKeyboardButton("🔙 Back", callback_data="admin_autoforward")
+                bold_button("🔙 Back", callback_data="admin_autoforward")
             ]])
         )
         return
@@ -2765,7 +2796,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Send the number of most recent messages to forward (e.g., 50)."),
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="admin_autoforward")
+                bold_button("🔙 Cancel", callback_data="admin_autoforward")
             ]])
         )
         return
@@ -2781,7 +2812,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             small_caps("Send the manga title to track."),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="admin_autoupdate")
+                bold_button("🔙 Cancel", callback_data="admin_autoupdate")
             ]])
         )
         return
@@ -2792,7 +2823,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 small_caps("No manga tracked."),
                 reply_markup=InlineKeyboardMarkup([[  # single back button
-                    InlineKeyboardButton("🔙 Back", callback_data="admin_autoupdate")
+                    bold_button("🔙 Back", callback_data="admin_autoupdate")
                 ]])
             )
             return
@@ -2802,13 +2833,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for mid, title, last_chap, target, active in manga_list:
             status = "✅" if active else "❌"
             display = f"{status} {title[:15]}"
-            row.append(InlineKeyboardButton(display, callback_data=f"manga_edit_{mid}"))
+            row.append(bold_button(display, callback_data=f"manga_edit_{mid}"))
             if len(row) == 2:
                 keyboard.append(row)
                 row = []
         if row:
             keyboard.append(row)
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_autoupdate")])
+        keyboard.append([bold_button("🔙 Back", callback_data="admin_autoupdate")])
         await query.edit_message_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
@@ -2817,9 +2848,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['edit_manga_id'] = manga_id
         # 2×2 grid for edit actions
         keyboard = [
-            [InlineKeyboardButton("♻️ Toggle Active", callback_data=f"manga_toggle_{manga_id}"),
-             InlineKeyboardButton("🗑 Delete", callback_data=f"manga_delete_{manga_id}")],
-            [InlineKeyboardButton("🔙 Back", callback_data="manga_list")]
+            [bold_button("♻️ Toggle Active", callback_data=f"manga_toggle_{manga_id}"),
+             bold_button("🗑 Delete", callback_data=f"manga_delete_{manga_id}")],
+            [bold_button("🔙 Back", callback_data="manga_list")]
         ]
         await query.edit_message_text(
             small_caps("Edit manga settings."),
@@ -2877,7 +2908,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             small_caps("Send the new base caption (HTML supported). Use {season}, {episode}, {total_episode}, {quality}."),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="upload_back")
+                bold_button("🔙 Cancel", callback_data="upload_back")
             ]])
         )
         return
@@ -2888,7 +2919,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             small_caps(f"Current season: {progress['season']}\nSend new season number:"),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="upload_back")
+                bold_button("🔙 Cancel", callback_data="upload_back")
             ]])
         )
         return
@@ -2899,7 +2930,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             small_caps(f"Current episode: {progress['episode']}\nSend new episode number:"),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="upload_back")
+                bold_button("🔙 Cancel", callback_data="upload_back")
             ]])
         )
         return
@@ -2910,7 +2941,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             small_caps(f"Current total episodes: {progress['total_episode']}\nSend new total:"),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="upload_back")
+                bold_button("🔙 Cancel", callback_data="upload_back")
             ]])
         )
         return
@@ -2922,13 +2953,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for quality in ALL_QUALITIES:
             is_selected = quality in progress["selected_qualities"]
             checkmark = "✅ " if is_selected else ""
-            row.append(InlineKeyboardButton(f"{checkmark}{quality}", callback_data=f"upload_toggle_quality_{quality}"))
+            row.append(bold_button(f"{checkmark}{quality}", callback_data=f"upload_toggle_quality_{quality}"))
             if len(row) == 2:
                 keyboard.append(row)
                 row = []
         if row:
             keyboard.append(row)
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="upload_back")])
+        keyboard.append([bold_button("🔙 Back", callback_data="upload_back")])
         await query.edit_message_text(
             small_caps("Select qualities to cycle through:"),
             parse_mode='HTML',
@@ -2955,7 +2986,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="upload_back")
+                bold_button("🔙 Cancel", callback_data="upload_back")
             ]])
         )
         return
@@ -2978,8 +3009,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "upload_clear_db":
         # Confirm with 2×2 grid
         keyboard = [
-            [InlineKeyboardButton("✔️ Yes, clear", callback_data="upload_confirm_clear"),
-             InlineKeyboardButton("❌ No", callback_data="upload_back")]
+            [bold_button("✔️ Yes, clear", callback_data="upload_confirm_clear"),
+             bold_button("❌ No", callback_data="upload_back")]
         ]
         await query.edit_message_text(
             small_caps("Are you sure? This will reset all counters but keep caption and quality settings."),
@@ -3021,7 +3052,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             small_caps("Send the date and time for the broadcast (format: YYYY-MM-DD HH:MM in UTC)."),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="admin_back")
+                bold_button("🔙 Cancel", callback_data="admin_back")
             ]])
         )
         return
@@ -3030,13 +3061,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "user_management":
         # 2×2 grid for user management options
         keyboard = [
-            [InlineKeyboardButton("👥 List Users", callback_data="list_users"),
-             InlineKeyboardButton("🔍 Search User", callback_data="search_user")],
-            [InlineKeyboardButton(" Ban User", callback_data="ban_user"),
-             InlineKeyboardButton(" Unban User", callback_data="unban_user")],
-            [InlineKeyboardButton("🗑 Delete User", callback_data="delete_user"),
-             InlineKeyboardButton("📤 Export CSV", callback_data="export_csv")],
-            [InlineKeyboardButton("🔙 BACK", callback_data="admin_back")]
+            [bold_button("👥 List Users", callback_data="list_users"),
+             bold_button("🔍 Search User", callback_data="search_user")],
+            [bold_button(" Ban User", callback_data="ban_user"),
+             bold_button(" Unban User", callback_data="unban_user")],
+            [bold_button("🗑 Delete User", callback_data="delete_user"),
+             bold_button("📤 Export CSV", callback_data="export_csv")],
+            [bold_button("🔙 BACK", callback_data="admin_back")]
         ]
         await query.edit_message_text(
             small_caps("User Management"),
@@ -3078,11 +3109,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         keyboard = []
         if not banned:
-            keyboard.append([InlineKeyboardButton(" Ban", callback_data=f"ban_user_{uid}")])
+            keyboard.append([bold_button(" Ban", callback_data=f"ban_user_{uid}")])
         else:
-            keyboard.append([InlineKeyboardButton(" Unban", callback_data=f"unban_user_{uid}")])
-        keyboard.append([InlineKeyboardButton("🗑 Delete", callback_data=f"delete_user_{uid}")])
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="user_management")])
+            keyboard.append([bold_button(" Unban", callback_data=f"unban_user_{uid}")])
+        keyboard.append([bold_button("🗑 Delete", callback_data=f"delete_user_{uid}")])
+        keyboard.append([bold_button("🔙 Back", callback_data="user_management")])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
@@ -3122,9 +3153,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += "None\n"
         # 2×2 grid for clone actions
         keyboard = [
-            [InlineKeyboardButton("➕ Add Clone", callback_data="add_clone"),
-             InlineKeyboardButton("🗑 Remove Clone", callback_data="remove_clone")],
-            [InlineKeyboardButton("🔙 BACK", callback_data="admin_back")]
+            [bold_button("➕ Add Clone", callback_data="add_clone"),
+             bold_button("🗑 Remove Clone", callback_data="remove_clone")],
+            [bold_button("🔙 BACK", callback_data="admin_back")]
         ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         return
@@ -3134,7 +3165,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Send the bot token of the clone bot."),
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="manage_clones")
+                bold_button("🔙 Cancel", callback_data="manage_clones")
             ]])
         )
         return
@@ -3147,13 +3178,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = []
         row = []
         for cid, token, uname, active, added in clones:
-            row.append(InlineKeyboardButton(f"@{uname}", callback_data=f"remove_clone_{uname}"))
+            row.append(bold_button(f"@{uname}", callback_data=f"remove_clone_{uname}"))
             if len(row) == 2:
                 keyboard.append(row)
                 row = []
         if row:
             keyboard.append(row)
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="manage_clones")])
+        keyboard.append([bold_button("🔙 Back", callback_data="manage_clones")])
         await query.edit_message_text(
             small_caps("Select clone to remove:"),
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -3179,9 +3210,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += "None\n"
         # 2×2 grid for channel actions
         keyboard = [
-            [InlineKeyboardButton("➕ Add Channel", callback_data="add_channel"),
-             InlineKeyboardButton("🗑 Remove Channel", callback_data="remove_channel")],
-            [InlineKeyboardButton("🔙 BACK", callback_data="admin_back")]
+            [bold_button("➕ Add Channel", callback_data="add_channel"),
+             bold_button("🗑 Remove Channel", callback_data="remove_channel")],
+            [bold_button("🔙 BACK", callback_data="admin_back")]
         ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         return
@@ -3191,7 +3222,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Send the channel @username (e.g., @mychannel)."),
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="manage_force_sub")
+                bold_button("🔙 Cancel", callback_data="manage_force_sub")
             ]])
         )
         return
@@ -3204,13 +3235,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = []
         row = []
         for uname, title, jbr in channels:
-            row.append(InlineKeyboardButton(title, callback_data=f"remove_channel_{uname}"))
+            row.append(bold_button(title, callback_data=f"remove_channel_{uname}"))
             if len(row) == 2:
                 keyboard.append(row)
                 row = []
         if row:
             keyboard.append(row)
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="manage_force_sub")])
+        keyboard.append([bold_button("🔙 Back", callback_data="manage_force_sub")])
         await query.edit_message_text(
             small_caps("Select channel to remove:"),
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -3230,7 +3261,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Send the channel @username or ID to generate a link for."),
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="admin_back")
+                bold_button("🔙 Cancel", callback_data="admin_back")
             ]])
         )
         return
@@ -3248,7 +3279,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps(f"Link ID: {first[0]}\nChannel: {first[1]}\n\nSend the title for this link."),
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="admin_back")
+                bold_button("🔙 Cancel", callback_data="admin_back")
             ]])
         )
         return
@@ -3259,7 +3290,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Send the backup channel URL (e.g., https://t.me/backup)."),
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="admin_back")
+                bold_button("🔙 Cancel", callback_data="admin_back")
             ]])
         )
         return
@@ -3270,7 +3301,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             small_caps("Send the target bot @username to move all links to."),
             reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                InlineKeyboardButton("🔙 Cancel", callback_data="admin_back")
+                bold_button("🔙 Cancel", callback_data="admin_back")
             ]])
         )
         return
@@ -3279,10 +3310,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "admin_settings":
         # 2×2 grid for settings
         keyboard = [
-            [InlineKeyboardButton(" Maintenance Mode", callback_data="toggle_maintenance"),
-             InlineKeyboardButton("♻️ Clone Redirect", callback_data="toggle_clone_redirect")],
-            [InlineKeyboardButton(" Set Backup Channel", callback_data="set_backup_channel")],
-            [InlineKeyboardButton("🔙 BACK", callback_data="admin_back")]
+            [bold_button(" Maintenance Mode", callback_data="toggle_maintenance"),
+             bold_button("♻️ Clone Redirect", callback_data="toggle_clone_redirect")],
+            [bold_button(" Set Backup Channel", callback_data="set_backup_channel")],
+            [bold_button("🔙 BACK", callback_data="admin_back")]
         ]
         maint_status = "ON" if is_maintenance_mode() else "OFF"
         clone_status = "ON" if get_setting("clone_redirect_enabled", "false") == "true" else "OFF"
@@ -3344,7 +3375,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(
                 small_caps(f"Channel found: {chat.title}\n\nSend the display title (or /skip to use '{chat.title}')."),
                 reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                    InlineKeyboardButton("🔙 Cancel", callback_data="manage_force_sub")
+                    bold_button("🔙 Cancel", callback_data="manage_force_sub")
                 ]])
             )
         except Exception as e:
@@ -3378,7 +3409,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(
                 small_caps(f"Channel: {chat.title}\n\nSend a title for this link (or /skip to use channel title)."),
                 reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                    InlineKeyboardButton("🔙 Cancel", callback_data="admin_back")
+                    bold_button("🔙 Cancel", callback_data="admin_back")
                 ]])
             )
         except Exception as e:
@@ -3400,7 +3431,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(
             small_caps(f"✅ Link generated for {title}:\n\n{deep_link}"),
             reply_markup=InlineKeyboardMarkup([[  # single back button
-                InlineKeyboardButton("🔙 BACK", callback_data="admin_back")
+                bold_button("🔙 BACK", callback_data="admin_back")
             ]])
         )
         user_states.pop(user_id, None)
@@ -3411,11 +3442,11 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data['broadcast_message'] = (update.message.chat_id, update.message.message_id)
         # 2×2 grid for broadcast modes
         keyboard = [
-            [InlineKeyboardButton("Normal", callback_data="broadcast_mode_normal"),
-             InlineKeyboardButton("Auto‑delete", callback_data="broadcast_mode_auto_delete")],
-            [InlineKeyboardButton("Pin", callback_data="broadcast_mode_pin"),
-             InlineKeyboardButton("Delete + Pin", callback_data="broadcast_mode_delete_pin")],
-            [InlineKeyboardButton("🔙 Cancel", callback_data="admin_back")]
+            [bold_button("Normal", callback_data="broadcast_mode_normal"),
+             bold_button("Auto‑delete", callback_data="broadcast_mode_auto_delete")],
+            [bold_button("Pin", callback_data="broadcast_mode_pin"),
+             bold_button("Delete + Pin", callback_data="broadcast_mode_delete_pin")],
+            [bold_button("🔙 Cancel", callback_data="admin_back")]
         ]
         user_states[user_id] = PENDING_BROADCAST_OPTIONS
         await update.message.reply_text(
@@ -3449,7 +3480,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(
                 small_caps(f"Next: Link ID {next_link[0]}, channel {next_link[1]}\nSend title (or /skip to leave blank):"),
                 reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                    InlineKeyboardButton("🔙 Cancel", callback_data="admin_back")
+                    bold_button("🔙 Cancel", callback_data="admin_back")
                 ]])
             )
         else:
@@ -3553,7 +3584,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 small_caps(f"Source: {chat.title or chat.id}\n\nNow send target channel (ID, @username, or forward)."),
                 parse_mode='HTML',
                 reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                    InlineKeyboardButton("🔙 Cancel", callback_data="admin_autoforward")
+                    bold_button("🔙 Cancel", callback_data="admin_autoforward")
                 ]])
             )
         except Exception as e:
@@ -3574,7 +3605,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(
                 small_caps("Connection added! You can now configure filters, replacements, etc. from the manage menu."),
                 reply_markup=InlineKeyboardMarkup([[  # single back button
-                    InlineKeyboardButton("🔙 Back", callback_data="admin_autoforward")
+                    bold_button("🔙 Back", callback_data="admin_autoforward")
                 ]])
             )
             user_states.pop(user_id, None)
@@ -3701,7 +3732,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(
                 small_caps("Now send the message to broadcast (text or media)."),
                 reply_markup=InlineKeyboardMarkup([[  # single cancel button
-                    InlineKeyboardButton("🔙 Cancel", callback_data="admin_back")
+                    bold_button("🔙 Cancel", callback_data="admin_back")
                 ]])
             )
         except ValueError:
@@ -3835,7 +3866,7 @@ async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = None
         if i == len(chunks) - 1 and missing:
             kb = InlineKeyboardMarkup([[  # single button
-                InlineKeyboardButton(
+                bold_button(
                     f"📝 Fill {len(missing)} missing titles",
                     callback_data="fill_missing_titles")
             ]])
@@ -3861,7 +3892,7 @@ async def move_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<blockquote>All deep links will be updated to use the new bot's username.</blockquote>",
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup([[  # single cancel button
-            InlineKeyboardButton("🔙 CANCEL", callback_data="admin_back")
+            bold_button("🔙 CANCEL", callback_data="admin_back")
         ]])
     )
     context.user_data['bot_prompt_message_id'] = msg.message_id
@@ -3878,7 +3909,7 @@ async def _do_move(update, context, target_username: str):
             f"⚠️ No links found under <code>@{BOT_USERNAME}</code>.",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[  # single back button
-                InlineKeyboardButton("🔙 BACK", callback_data="admin_back")
+                bold_button("🔙 BACK", callback_data="admin_back")
             ]])
         )
         return
@@ -3916,7 +3947,7 @@ async def _do_move(update, context, target_username: str):
         kb = None
         if i == len(chunks) - 1:
             kb = InlineKeyboardMarkup([[  # single back button
-                InlineKeyboardButton("🔙 BACK TO MENU", callback_data="admin_back")
+                bold_button("🔙 BACK TO MENU", callback_data="admin_back")
             ]])
         await context.bot.send_message(chat_id, chunk.strip(), parse_mode='HTML', reply_markup=kb)
 
@@ -3938,7 +3969,7 @@ async def addclone_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 <b>Add Clone Bot</b>\n\nSend the <b>BOT TOKEN</b> of the clone bot.",
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup([[  # single cancel button
-            InlineKeyboardButton("🔙 CANCEL", callback_data="admin_back")
+            bold_button("🔙 CANCEL", callback_data="admin_back")
         ]])
     )
     context.user_data['bot_prompt_message_id'] = msg.message_id
@@ -3955,7 +3986,7 @@ async def _register_clone(update, context, token: str):
                 f"✅ Clone bot <b>@{username}</b> registered!",
                 parse_mode='HTML',
                 reply_markup=InlineKeyboardMarkup([[  # single back button
-                    InlineKeyboardButton(" Manage Clones", callback_data="manage_clones")
+                    bold_button(" Manage Clones", callback_data="manage_clones")
                 ]])
             )
         else:
@@ -4018,7 +4049,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Maintenance: {maint}\n"
         f"Link Expiry: {LINK_EXPIRY_MINUTES} min"
     )
-    keyboard = [[InlineKeyboardButton("🔙 BACK TO MENU", callback_data="admin_back")]]
+    keyboard = [[bold_button("🔙 BACK TO MENU", callback_data="admin_back")]]
     await update.message.reply_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard))
 
 @force_sub_required
@@ -4124,7 +4155,7 @@ async def listusers_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uname_d = f"@{username}" if username else "—"
         status = "🚫" if banned else "✅"
         text += f"{status} <b>{name}</b> (<code>{uname_d}</code>)\n"
-        row.append(InlineKeyboardButton(f"👤 {name}", callback_data=f"manage_user_{uid}"))
+        row.append(bold_button(f"👤 {name}", callback_data=f"manage_user_{uid}"))
         if len(row) == 2:
             kb.append(row)
             row = []
@@ -4132,12 +4163,12 @@ async def listusers_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb.append(row)
     nav = []
     if offset > 0:
-        nav.append(InlineKeyboardButton("🔙 PREV", callback_data=f"user_page_{offset-10}"))
+        nav.append(bold_button("🔙 PREV", callback_data=f"user_page_{offset-10}"))
     if total > offset + 10:
-        nav.append(InlineKeyboardButton("NEXT 🔜", callback_data=f"user_page_{offset+10}"))
+        nav.append(bold_button("NEXT 🔜", callback_data=f"user_page_{offset+10}"))
     if nav:
         kb.append(nav)
-    kb.append([InlineKeyboardButton("🔙 BACK", callback_data="admin_back")])
+    kb.append([bold_button("🔙 BACK", callback_data="admin_back")])
 
     await update.message.reply_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
@@ -4406,7 +4437,7 @@ async def handle_channel_link_deep(update: Update, context: ContextTypes.DEFAULT
             chat.id,
             expire_date=datetime.now().timestamp() + LINK_EXPIRY_MINUTES * 60
         )
-        keyboard = [[InlineKeyboardButton("• Join Channel •", url=invite_link.invite_link)]]
+        keyboard = [[bold_button("• Join Channel •", url=invite_link.invite_link)]]
         await context.bot.send_message(
             chat_id,
             small_caps(
@@ -4991,17 +5022,17 @@ def get_upload_menu_markup():
     auto_status = '✅ ON' if progress['auto_caption_enabled'] else '❌ OFF'
     # 2×2 grid for upload menu
     keyboard = [
-        [InlineKeyboardButton("Preview Caption", callback_data="upload_preview"),
-         InlineKeyboardButton("Set Caption", callback_data="upload_set_caption")],
-        [InlineKeyboardButton("Set Season", callback_data="upload_set_season"),
-         InlineKeyboardButton("Set Episode", callback_data="upload_set_episode")],
-        [InlineKeyboardButton("Set Total Episodes", callback_data="upload_set_total"),
-         InlineKeyboardButton("Quality Settings", callback_data="upload_quality_menu")],
-        [InlineKeyboardButton("Set Target Channel", callback_data="upload_set_channel"),
-         InlineKeyboardButton(f"Auto-Caption: {auto_status}", callback_data="upload_toggle_auto")],
-        [InlineKeyboardButton("Reset Episode", callback_data="upload_reset")],
-        [InlineKeyboardButton("🗑 Clear Database", callback_data="upload_clear_db")],
-        [InlineKeyboardButton("🔙 Back", callback_data="admin_back")]
+        [bold_button("Preview Caption", callback_data="upload_preview"),
+         bold_button("Set Caption", callback_data="upload_set_caption")],
+        [bold_button("Set Season", callback_data="upload_set_season"),
+         bold_button("Set Episode", callback_data="upload_set_episode")],
+        [bold_button("Set Total Episodes", callback_data="upload_set_total"),
+         bold_button("Quality Settings", callback_data="upload_quality_menu")],
+        [bold_button("Set Target Channel", callback_data="upload_set_channel"),
+         bold_button(f"Auto-Caption: {auto_status}", callback_data="upload_toggle_auto")],
+        [bold_button("Reset Episode", callback_data="upload_reset")],
+        [bold_button("🗑 Clear Database", callback_data="upload_clear_db")],
+        [bold_button("🔙 Back", callback_data="admin_back")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
