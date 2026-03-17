@@ -196,7 +196,7 @@ BOT_START_TIME = time.time()
     AF_REPLACEMENTS_MENU,
     AF_ADD_REPLACEMENT_PATTERN,
     AF_BULK_FORWARD_COUNT,
-) = range(10, 42)
+) = range(10, 45)
 
 # Additional states for user management
 (
@@ -447,7 +447,7 @@ def force_sub_required(func):
             for uname, title, jbr in channels_info:
                 clean = uname.lstrip('@')
                 if jbr:
-                    btn_label = f"📨 Request to Join — {title}"
+                    btn_label = f"{title}"
                 else:
                     btn_label = f"{title}"
                 keyboard.append([bold_button(btn_label, url=f"https://t.me/{clean}")])
