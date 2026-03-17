@@ -174,7 +174,7 @@ BOT_START_TIME = time.time()
     UPLOAD_SET_TOTAL,
     UPLOAD_SET_CHANNEL,
     UPLOAD_QUALITY_MENU,
-) = range(10, 37)
+) = range(10, 38)
 
 # Additional states for user management
 (
