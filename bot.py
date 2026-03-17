@@ -402,6 +402,37 @@ async def is_user_subscribed(user_id: int, bot) -> bool:
                 logger.warning(f"Cannot check membership in {ch} (bot not admin?): {e}")
     return True
 
+async def get_unsubscribed_channels(user_id: int, bot) -> List[Tuple[str, str, bool]]:
+    """Return list of (username, title, jbr) for channels where user is NOT subscribed."""
+    channels_info = get_all_force_sub_channels(return_usernames_only=False)
+    unsubscribed = []
+    for uname, title, jbr in channels_info:
+        try:
+            member = await bot.get_chat_member(chat_id=uname, user_id=user_id)
+            if member.status in ['left', 'kicked']:
+                unsubscribed.append((uname, title, jbr))
+        except Exception as e:
+            # If this bot cannot check (e.g., not admin), try main bot if we are a clone
+            if I_AM_CLONE:
+                main_token = get_main_bot_token()
+                if main_token:
+                    main_bot = Bot(token=main_token)
+                    try:
+                        member = await main_bot.get_chat_member(chat_id=uname, user_id=user_id)
+                        if member.status in ['left', 'kicked']:
+                            unsubscribed.append((uname, title, jbr))
+                    except Exception as e2:
+                        logger.warning(f"Main bot also cannot check {uname}: {e2}")
+                        # Assume not subscribed to be safe
+                        unsubscribed.append((uname, title, jbr))
+                else:
+                    unsubscribed.append((uname, title, jbr))
+            else:
+                logger.warning(f"Cannot check membership in {uname} (bot not admin?): {e}")
+                # Assume not subscribed to be safe
+                unsubscribed.append((uname, title, jbr))
+    return unsubscribed
+
 def force_sub_required(func):
     """Decorator to enforce force‑subscription before allowing command execution."""
     @wraps(func)
@@ -435,31 +466,28 @@ def force_sub_required(func):
             return await func(update, context, *args, **kwargs)
 
         # Check force‑sub channels
-        channels_info = get_all_force_sub_channels(return_usernames_only=False)
-        if not channels_info:
-            return await func(update, context, *args, **kwargs)
-
-        subscribed = await is_user_subscribed(user.id, context.bot)
-        if not subscribed:
+        unsubscribed = await get_unsubscribed_channels(user.id, context.bot)
+        if unsubscribed:
             await delete_update_message(update, context)
-            keyboard = []
-            lines = []
-            for uname, title, jbr in channels_info:
-                clean = uname.lstrip('@')
-                if jbr:
-                    btn_label = f"{title}"
-                else:
-                    btn_label = f"{title}"
-                keyboard.append([bold_button(btn_label, url=f"https://t.me/{clean}")])
-                lines.append(f"• <b>{title}</b> (<code>{uname}</code>)")
+            total_channels = len(get_all_force_sub_channels(return_usernames_only=False))
+            unjoined = len(unsubscribed)
 
-            keyboard.append([bold_button("♻️ Verify", callback_data="verify_subscription")])
-            channels_text = "\n".join(lines)
+            # Build buttons for each unjoined channel (mathematical bold)
+            keyboard = []
+            for uname, title, jbr in unsubscribed:
+                clean = uname.lstrip('@')
+                keyboard.append([bold_button(title, url=f"https://t.me/{clean}")])
+
+            # Add the "TRY AGAIN" button
+            keyboard.append([bold_button("TRY AGAIN", callback_data="verify_subscription")])
+
+            # Compose the message exactly as in your screenshot
             text = (
-                "<b>Join our channels to use this bot:</b>\n\n"
-                f"{channels_text}\n\n"
-                "<blockquote><b>After joining all channels, tap</b> <b>Verify</b> <b>to continue.</b></blockquote>"
+                f"HEY, {user.first_name} ✨ YOU HAVEN'T JOINED {unjoined}/{total_channels} CHANNELS YET. "
+                f"PLEASE JOIN THE CHANNELS PROVIDED BELOW, THEN TRY AGAIN... ! \n\n"
+                f"⚠️ FACING PROBLEMS, USE: /help"
             )
+
             if update.message:
                 await update.message.reply_text(
                     text,
@@ -476,6 +504,7 @@ def force_sub_required(func):
 
         return await func(update, context, *args, **kwargs)
     return wrapper
+  
 
 # ================================================================================
 #                                PING COMMAND
