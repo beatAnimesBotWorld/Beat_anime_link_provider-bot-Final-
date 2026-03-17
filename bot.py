@@ -472,6 +472,7 @@ def force_sub_required(func):
             await delete_update_message(update, context)
             total_channels = len(get_all_force_sub_channels(return_usernames_only=False))
             unjoined = len(unsubscribed)
+            user_name = html.escape(user.first_name or user.username or "User")
 
             # Build buttons for each unjoined channel (mathematical bold)
             keyboard = []
@@ -1643,7 +1644,7 @@ async def manga_update_job(context: ContextTypes.DEFAULT_TYPE):
                                     chat_id=target,
                                     document=f,
                                     filename=pdf_file,
-                                    caption=f"📖 <b>{title}</b> – {chap_title}",
+                                    caption=f" <b>{title}</b> – {chap_title}",
                                     parse_mode='HTML'
                                 )
                             os.remove(pdf_file)
@@ -1651,13 +1652,13 @@ async def manga_update_job(context: ContextTypes.DEFAULT_TYPE):
                             # Fallback to link
                             await context.bot.send_message(
                                 target,
-                                f"📖 <b>{title}</b>\n\nNew chapter: {chap_title}\n\nRead: https://mangadex.org/chapter/{latest['id']}",
+                                f" <b>{title}</b>\n\nNew chapter: {chap_title}\n\nRead: https://mangadex.org/chapter/{latest['id']}",
                                 parse_mode='HTML'
                             )
                     else:
                         await context.bot.send_message(
                             target,
-                            f"📖 <b>{title}</b>\n\nNew chapter: {chap_title}\n\nRead: https://mangadex.org/chapter/{latest['id']}",
+                            f" <b>{title}</b>\n\nNew chapter: {chap_title}\n\nRead: https://mangadex.org/chapter/{latest['id']}",
                             parse_mode='HTML'
                         )
 
@@ -2032,44 +2033,44 @@ async def cmd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_bot_prompt(context, update.effective_chat.id)
 
     commands_text = small_caps(
-        "Admin Commands:\n\n"
-        "/start – Main menu\n"
-        "/cmd – This list\n"
-        "/stats – Bot statistics\n"
-        "/sysstats – System stats (uptime, DB size, etc.)\n"
-        "/backup – List all generated links\n"
-        "/move <target> – Move links to another bot\n"
-        "/addclone <token> – Register a clone bot\n"
-        "/reload – Restart bot (with optional message ID)\n"
-        "/addchannel @user Title – Add force‑sub channel\n"
-        "/removechannel @user – Remove force‑sub channel\n"
-        "/banuser @id – Ban a user\n"
-        "/unbanuser @id – Unban user\n"
-        "/listusers – List users (paginated)\n"
-        "/deleteuser <id> – Delete user from DB\n"
-        "/broadcaststats – View broadcast history\n"
-        "/exportusers – Export user list as CSV\n"
-        "/settings – Open category settings\n"
-        "/test – Health check\n"
-        "/manga <name> – Create manga post\n"
-        "/anime <name> – Create anime post\n"
-        "/movie <name> – Create movie post\n"
-        "/tvshow <name> – Create TV show post\n"
-        "/help – Display help\n"
-        "/autoupdate – Auto manga settings\n"
-        "/autoforward – Manage auto‑forward\n"
-        "/ping – Check response time\n"
-        "/channel – Show indexed channels/groups\n"
-        "/logs – Fetch latest bot logs\n"
-        "/alive – Check bot server\n"
-        "/users – Show total registered users\n"
-        "/connect <group> – Connect a group\n"
-        "/disconnect <group> – Disconnect a group\n"
-        "/connections – List connected groups\n"
-        "/id – Get Telegram IDs\n"
-        "/info – Show user/chat info\n"
-        "/restart – Alias for /reload\n"
-        "/upload – Anime caption manager"
+        "<blockquote expandable><b>Admin Commands:</b>\n\n"
+        "<b>/start – Main menu</b>\n"
+        "<b>/cmd – This list</b>\n"
+        "<b>/stats – Bot statistics</b>\n"
+        "<b>/sysstats – System stats (uptime, DB size, etc.)</b>\n"
+        "<b>/backup – List all generated links</b>\n"
+        "<b>/move <target> – Move links to another bot</b>\n"
+        "<b>/addclone <token> – Register a clone bot</b>\n"
+        "<b>/reload – Restart bot (with optional message ID)</b>\n"
+        "<b>/addchannel @user Title – Add force‑sub channel</b>\n"
+        "<b>/removechannel @user – Remove force‑sub channel</b>\n"
+        "<b>/banuser @id – Ban a user</b>\n"
+        "<b>/unbanuser @id – Unban user</b>\n"
+        "<b>/listusers – List users (paginated)</b>\n"
+        "<b>/deleteuser <id> – Delete user from DB</b>\n"
+        "<b>/broadcaststats – View broadcast history</b>\n"
+        "<b>/exportusers – Export user list as CSV</b>\n"
+        "<b>/settings – Open category settings</b>\n"
+        "<b>/test – Health check</b>\n"
+        "<b>/manga <name> – Create manga post</b>\n"
+        "<b>/anime <name> – Create anime post</b>\n"
+        "<b>/movie <name> – Create movie post</b>\n"
+        "<b>/tvshow <name> – Create TV show post</b>\n"
+        "<b>/help – Display help</b>\n"
+        "<b>/autoupdate – Auto manga settings</b>\n"
+        "<b>/autoforward – Manage auto‑forward</b>\n"
+        "<b>/ping – Check response time</b>\n"
+        "<b>/channel – Show indexed channels/groups</b>\n"
+        "<b>/logs – Fetch latest bot logs</b>\n"
+        "<b>/alive – Check bot server</b>\n"
+        "<b>/users – Show total registered users</b>\n"
+        "<b>/connect <group> – Connect a group</b>\n"
+        "<b>/disconnect <group> – Disconnect a group</b>\n"
+        "<b>/connections – List connected groups</b>\n"
+        "<b>/id – Get Telegram IDs</b>\n"
+        "<b>/info – Show user/chat info</b>\n"
+        "<b>/restart – Alias for /reload</b>\n"
+        "<b>/upload – Anime caption manager</b></blockquote>"
     )
     await update.message.reply_text(commands_text, parse_mode='HTML')
 
@@ -2086,7 +2087,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_bot_prompt(context, update.effective_chat.id)
 
     help_text = small_caps(
-        "<blockquote expandable>How to use the Bot:\n\n"
+        "<blockquote expandable><b>How to use the Bot:\n\n"
         "[1️] Create Posts:\n"
         "• Use /manga [name] for manga posts.\n"
         "• Use /movie [name] for movie posts.\n"
@@ -2106,7 +2107,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /help - Display help\n"
         "• /stats - Get bot stats\n"
         "• /autoupdate - Auto Manga Settings\n"
-        "• /restart - Restart the bot (Admins Only)</blockquote>"
+        "• /restart - Restart the bot (Admins Only)</blockquote></b>"
     )
 
     if HELP_IMAGE_URL:
@@ -2177,12 +2178,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_admin_menu(chat_id, context)
     else:
         keyboard = [
-            [bold_button("ᴀɴɪᴍᴇ ᴄʜᴀɴɴᴇʟ", url=PUBLIC_ANIME_CHANNEL_URL)],
-            [bold_button("ᴄᴏɴᴛᴀᴄᴛ ᴀᴅᴍɪɴ", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")],
-            [bold_button("ʀᴇǫᴜᴇsᴛ ᴀɴɪᴍᴇ ᴄʜᴀɴɴᴇʟ", url=REQUEST_CHANNEL_URL)],
+            [InlineKeyboardButton("ᴀɴɪᴍᴇ ᴄʜᴀɴɴᴇʟ", url=PUBLIC_ANIME_CHANNEL_URL)],
+            [InlineKeyboardButton("ᴄᴏɴᴛᴀᴄᴛ ᴀᴅᴍɪɴ", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")],
+            [InlineKeyboardButton("ʀᴇǫᴜᴇsᴛ ᴀɴɪᴍᴇ ᴄʜᴀɴɴᴇʟ", url=REQUEST_CHANNEL_URL)],
             [
-                bold_button("ᴀʙᴏᴜᴛ ᴍᴇ", callback_data="about_bot"),
-                bold_button("ᴄʟᴏsᴇ", callback_data="close_message")
+                InlineKeyboardButton("ᴀʙᴏᴜᴛ ᴍᴇ", callback_data="about_bot"),
+                InlineKeyboardButton("ᴄʟᴏsᴇ", callback_data="close_message")
             ]
         ]
         try:
@@ -2277,14 +2278,14 @@ async def send_admin_stats(query: CallbackQuery, context: ContextTypes.DEFAULT_T
     blocked_users = get_blocked_users_count()
 
     stats_text = small_caps(
-        "BOT STATISTICS\n\n"
-        f"Total Users: {user_count}\n"
-        f"Force‑Sub Channels: {channel_count}\n"
-        f"Total Links: {link_count}\n"
-        f"Active Clones: {len(clones)}\n"
-        f"Blocked Users: {blocked_users}\n"
-        f"Maintenance: {maint}\n"
-        f"Link Expiry: {LINK_EXPIRY_MINUTES} min"
+        "<b>BOT STATISTICS</b>\n\n"
+        f"<b>Total Users: {user_count}</b>\n"
+        f"<b>Force‑Sub Channels: {channel_count}</b>\n"
+        f"<b>Total Links: {link_count}</b>\n"
+        f"<b>Active Clones: {len(clones)}</b>\n"
+        f"<b>Blocked Users: {blocked_users}</b>\n"
+        f"<b>Maintenance: {maint}</b>\n"
+        f"<b>Link Expiry: {LINK_EXPIRY_MINUTES} min</b>"
     )
     keyboard = [
         [bold_button(" ♻️ REFRESH", callback_data="admin_stats")],
@@ -4245,7 +4246,7 @@ async def channel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         auto_sources = cur.fetchall()
 
     text = small_caps("Indexed Channels/Groups:\n\n")
-    text += "📢 Force‑Sub Channels:\n"
+    text += " Force‑Sub Channels:\n"
     if force_subs:
         for uname, title, jbr in force_subs:
             text += f"  • {title} ({uname})\n"
@@ -4472,8 +4473,8 @@ async def handle_channel_link_deep(update: Update, context: ContextTypes.DEFAULT
         await context.bot.send_message(
             chat_id,
             small_caps(
-                "Here is your link! Click below to proceed.\n\n"
-                "Note: If the link expires, tap the original post link again to get a fresh one."
+                "<blockquote><b>ʜᴇʀᴇ ɪs ʏᴏᴜʀ ʟɪɴᴋ! ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ᴛᴏ ᴘʀᴏᴄᴇᴇᴅ</b>\n\n</blockquote>"
+                "<b><u>Note: If the link is expired, please click the post link again to get a new one.</u></b>"
             ),
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup(keyboard)
