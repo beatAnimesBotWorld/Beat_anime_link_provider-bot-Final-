@@ -61,7 +61,8 @@ import img2pdf
 from PIL import Image, ImageDraw, ImageFont
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot, constants,
-    InputMediaPhoto, InputMediaVideo, InputMediaDocument, ChatMember
+    InputMediaPhoto, InputMediaVideo, InputMediaDocument, ChatMember,
+    CallbackQuery
 )
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, ContextTypes,
@@ -483,9 +484,10 @@ def force_sub_required(func):
 
             # Compose the message exactly as in your screenshot
             text = (
-                f"HEY, {user.first_name} ✨ YOU HAVEN'T JOINED {unjoined}/{total_channels} CHANNELS YET. "
-                f"PLEASE JOIN THE CHANNELS PROVIDED BELOW, THEN TRY AGAIN... ! \n\n"
-                f"⚠️ FACING PROBLEMS, USE: /help"
+                f"⚠️ <b>Hey, {user_name} ×</b> 💬\n\n"
+                f"<b>YOU HAVEN'T JOINED {unjoined}/{total_channels} CHANNELS YET. "
+                f"PLEASE JOIN THE CHANNELS PROVIDED BELOW, THEN TRY AGAIN.. !</b>\n\n"
+                f"❗ <b>FACING PROBLEMS, USE:</b> /help"
             )
 
             if update.message:
