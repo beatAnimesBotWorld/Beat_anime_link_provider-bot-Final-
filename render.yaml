@@ -3,7 +3,7 @@ services:
     name: anime-links-bot
     env: python
     plan: free
-    pythonVersion: "3.11.0"
+    pythonVersion: "3.11.9"
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: python bot.py
     envVars:
