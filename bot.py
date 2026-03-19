@@ -108,7 +108,13 @@ from telegram.error import (
 from telegram.constants import ParseMode
 
 from database_safe import *
-from health_check import health_server
+try:
+    from health_check import health_server
+except ImportError:
+    class _HealthServerStub:
+        async def start(self): pass
+        async def stop(self): pass
+    health_server = _HealthServerStub()
 
 # ================================================================================
 #                                LOGGING SETUP
@@ -189,6 +195,28 @@ BOT_USERNAME: str = ""
 I_AM_CLONE: bool = False
 BOT_START_TIME: float = time.time()
 _clone_bot_cache: Dict[str, Any] = {}
+_clone_tasks: Dict[str, Any] = {}  # running clone asyncio tasks
+
+# ── In-memory API cache (performance optimization) ────────────────────────────
+_api_cache: Dict[str, Any] = {}
+_API_CACHE_TTL: int = 300  # 5 minutes
+
+
+def _cache_get(key: str) -> Optional[Any]:
+    """Get a value from the API cache if not expired."""
+    entry = _api_cache.get(key)
+    if entry and (time.time() - entry["ts"]) < _API_CACHE_TTL:
+        return entry["data"]
+    return None
+
+
+def _cache_set(key: str, data: Any) -> None:
+    """Store a value in the API cache."""
+    _api_cache[key] = {"data": data, "ts": time.time()}
+    # Trim cache to prevent unbounded growth
+    if len(_api_cache) > 500:
+        oldest = min(_api_cache, key=lambda k: _api_cache[k]["ts"])
+        _api_cache.pop(oldest, None)
 
 # ================================================================================
 #                           STATE MACHINE CONSTANTS
@@ -293,6 +321,11 @@ PENDING_FILL_TITLE = 45
 (
     MANGA_SEARCH_INPUT,
 ) = range(51, 52)
+
+# Auto-manga delivery states
+(
+    AU_MANGA_CUSTOM_INTERVAL,
+) = range(52, 53)
 
 # Conversation dictionaries
 user_states: Dict[int, int] = {}
@@ -1197,7 +1230,38 @@ class AniListClient:
     """
 
     @staticmethod
+    def _normalize_query(query: str) -> str:
+        """Normalize and fuzzy-correct search query.
+        Removes extra spaces and common typos. AniList handles fuzzy matching server-side.
+        """
+        import difflib
+        query = query.strip()
+        # Remove duplicate spaces
+        query = " ".join(query.split())
+        # Common abbreviation expansions
+        expansions = {
+            "aot": "attack on titan",
+            "bnha": "my hero academia",
+            "mha": "my hero academia",
+            "hxh": "hunter x hunter",
+            "dbs": "dragon ball super",
+            "dbz": "dragon ball z",
+            "op": "one piece",
+            "fma": "fullmetal alchemist",
+            "snk": "attack on titan",
+            "jjk": "jujutsu kaisen",
+            "csm": "chainsaw man",
+            "slime": "that time i got reincarnated as a slime",
+            "rezero": "re zero starting life in another world",
+        }
+        lower = query.lower()
+        if lower in expansions:
+            return expansions[lower]
+        return query
+
+    @staticmethod
     def search_anime(query: str) -> Optional[Dict]:
+        normalized = AniListClient._normalize_query(query)
         q = f"""
         query($s:String){{
           Media(search:$s,type:ANIME){{
@@ -1205,10 +1269,14 @@ class AniListClient:
           }}
         }}
         """
-        return AniListClient._query(q, {"s": query})
+        result = AniListClient._query(q, {"s": normalized})
+        if not result and normalized != query:
+            result = AniListClient._query(q, {"s": query})
+        return result
 
     @staticmethod
     def search_manga(query: str) -> Optional[Dict]:
+        normalized = AniListClient._normalize_query(query)
         q = f"""
         query($s:String){{
           Media(search:$s,type:MANGA){{
@@ -1216,7 +1284,10 @@ class AniListClient:
           }}
         }}
         """
-        return AniListClient._query(q, {"s": query})
+        result = AniListClient._query(q, {"s": normalized})
+        if not result and normalized != query:
+            result = AniListClient._query(q, {"s": query})
+        return result
 
     @staticmethod
     def get_by_id(media_id: int, media_type: str = "ANIME") -> Optional[Dict]:
@@ -1264,6 +1335,10 @@ class AniListClient:
 
     @staticmethod
     def _query(query_str: str, variables: dict) -> Optional[Dict]:
+        cache_key = f"anilist:{hashlib.md5(json.dumps({'q': query_str, 'v': variables}, sort_keys=True).encode()).hexdigest()}"
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
         try:
             resp = requests.post(
                 AniListClient.BASE_URL,
@@ -1276,7 +1351,10 @@ class AniListClient:
             )
             if resp.status_code == 200:
                 data = resp.json()
-                return data.get("data", {}).get("Media")
+                result = data.get("data", {}).get("Media")
+                if result:
+                    _cache_set(cache_key, result)
+                return result
             elif resp.status_code == 429:
                 api_logger.warning("AniList rate limited")
                 return None
@@ -1304,7 +1382,7 @@ class AniListClient:
         score = data.get("averageScore")
         popularity = data.get("popularity", 0)
         genres = data.get("genres", []) or []
-        genres_str = " • ".join(genres[:5]) if genres else "N/A"
+        genres_str = ", ".join(genres[:5]) if genres else "N/A"
 
         season = data.get("season")
         season_year = data.get("seasonYear")
@@ -1319,7 +1397,7 @@ class AniListClient:
         studio_name = studio_nodes[0].get("name", "N/A") if studio_nodes else "N/A"
 
         desc = strip_html(data.get("description") or "No description available.")
-        desc = truncate(desc, 300)
+        desc = truncate(desc, 350)
 
         next_ep = data.get("nextAiringEpisode")
         next_ep_str = ""
@@ -1328,51 +1406,17 @@ class AniListClient:
             time_left = next_ep.get("timeUntilAiring", 0)
             days = time_left // 86400
             hrs = (time_left % 86400) // 3600
-            next_ep_str = f"\n<b>⏳ Next Episode:</b> Ep.{ep_num} in {days}d {hrs}h"
+            next_ep_str = f"\n<b>Next Episode:</b> Ep.{ep_num} in {days}d {hrs}h"
 
         tags = data.get("tags", []) or []
         top_tags = [t["name"] for t in tags if not t.get("isMediaSpoiler")][:3]
-        tags_str = " • ".join(top_tags) if top_tags else ""
+        tags_str = ", ".join(top_tags) if top_tags else ""
 
         # Ranking
         rankings = data.get("rankings", []) or []
         rank_str = ""
         for r in rankings[:2]:
             rank_str += f"#{r.get('rank', '?')} {r.get('context', '').title()}\n"
-
-        lines = [
-            b(e(title_display)),
-        ]
-        if title_romaji and title_romaji != title_display:
-            lines.append(f"<i>{e(title_romaji)}</i>")
-        if title_native:
-            lines.append(f"<i>{e(title_native)}</i>")
-        lines.append("")
-
-        lines += [
-            f"<b>📊 Type:</b> {code(fmt)}",
-            f"<b>📺 Status:</b> {code(status)}",
-            f"<b>🎬 Episodes:</b> {code(str(episodes) + (f' × {duration}min' if duration else ''))}",
-            f"<b>⭐ Score:</b> {code(str(score) + '/100' if score else 'N/A')}",
-            f"<b>❤️ Popularity:</b> {code(format_number(popularity))}",
-            f"<b>🌸 Season:</b> {code(season_str)}",
-            f"<b>🏠 Studio:</b> {code(e(studio_name))}",
-            f"<b>🌍 Country:</b> {code(country or 'N/A')}",
-            f"<b>📅 Aired:</b> {code(start_date + ' → ' + end_date)}",
-            f"<b>🎭 Genres:</b> {e(genres_str)}",
-        ]
-        if tags_str:
-            lines.append(f"<b>🏷 Tags:</b> {e(tags_str)}")
-        if rank_str:
-            lines.append(f"<b>🏆 Rankings:</b>\n{e(rank_str.strip())}")
-        lines.append(next_ep_str)
-        lines.append("")
-        lines.append(b("📖 Synopsis"))
-        lines.append(bq(e(desc), expandable=True))
-
-        site_url = data.get("siteUrl", "")
-        if site_url:
-            lines.append(f"\n<b>🔗 AniList:</b> {site_url}")
 
         if template:
             for key, val in {
@@ -1382,11 +1426,31 @@ class AniListClient:
                 "{genres}": e(genres_str), "{studio}": e(studio_name),
                 "{synopsis}": e(desc), "{season}": e(season_str),
                 "{popularity}": format_number(popularity),
+                "{rating}": str(score or "N/A"),
             }.items():
                 template = template.replace(key, val)
             return template
 
-        return "\n".join(l for l in lines if l is not None)
+        # Spec-compliant format
+        caption = b(e(title_display)) + "\n\n"
+        caption += "━━━━━━━━━━━━━━\n"
+        caption += f"➤ Status: {status}\n"
+        caption += f"➤ Episodes: {str(episodes)}"
+        if duration:
+            caption += f" × {duration}min"
+        caption += "\n"
+        caption += f"➤ Rating: {str(score) + '/100' if score else 'N/A'}\n"
+        caption += f"➤ Genres: {e(genres_str)}\n"
+        if next_ep_str:
+            caption += next_ep_str + "\n"
+        caption += "\n"
+        caption += bq(e(desc), expandable=True)
+
+        site_url = data.get("siteUrl", "")
+        if site_url:
+            caption += f"\n\n<b>AniList:</b> {site_url}"
+
+        return caption
 
     @staticmethod
     def format_manga_caption(data: Dict, template: Optional[str] = None) -> str:
@@ -1403,48 +1467,18 @@ class AniListClient:
         score = data.get("averageScore")
         popularity = data.get("popularity", 0)
         genres = data.get("genres", []) or []
-        genres_str = " • ".join(genres[:5]) if genres else "N/A"
+        genres_str = ", ".join(genres[:5]) if genres else "N/A"
 
         start_date = parse_date(data.get("startDate"))
         end_date = parse_date(data.get("endDate"))
         country = data.get("countryOfOrigin", "")
 
         desc = strip_html(data.get("description") or "No description available.")
-        desc = truncate(desc, 300)
+        desc = truncate(desc, 350)
 
         tags = data.get("tags", []) or []
         top_tags = [t["name"] for t in tags][:3]
-        tags_str = " • ".join(top_tags) if top_tags else ""
-
-        lines = [
-            b(e(title_display)),
-        ]
-        if title_romaji and title_romaji != title_display:
-            lines.append(f"<i>{e(title_romaji)}</i>")
-        if title_native:
-            lines.append(f"<i>{e(title_native)}</i>")
-        lines.append("")
-
-        lines += [
-            f"<b>📖 Type:</b> {code(fmt)}",
-            f"<b>📊 Status:</b> {code(status)}",
-            f"<b>📝 Chapters:</b> {code(str(chapters))}",
-            f"<b>📚 Volumes:</b> {code(str(volumes))}",
-            f"<b>⭐ Score:</b> {code(str(score) + '/100' if score else 'N/A')}",
-            f"<b>❤️ Popularity:</b> {code(format_number(popularity))}",
-            f"<b>🌍 Country:</b> {code(country or 'N/A')}",
-            f"<b>📅 Published:</b> {code(start_date + ' → ' + end_date)}",
-            f"<b>🎭 Genres:</b> {e(genres_str)}",
-        ]
-        if tags_str:
-            lines.append(f"<b>🏷 Tags:</b> {e(tags_str)}")
-        lines.append("")
-        lines.append(b("📖 Synopsis"))
-        lines.append(bq(e(desc), expandable=True))
-
-        site_url = data.get("siteUrl", "")
-        if site_url:
-            lines.append(f"\n<b>🔗 AniList:</b> {site_url}")
+        tags_str = ", ".join(top_tags) if top_tags else ""
 
         if template:
             for key, val in {
@@ -1458,7 +1492,20 @@ class AniListClient:
                 template = template.replace(key, val)
             return template
 
-        return "\n".join(l for l in lines if l is not None)
+        # Spec-compliant format
+        caption = b(e(title_display)) + "\n\n"
+        caption += "━━━━━━━━━━━━━━\n"
+        caption += f"➤ Chapters: {str(chapters)}\n"
+        caption += f"➤ Status: {status}\n"
+        caption += f"➤ Source: {e(genres_str)}\n"
+        caption += "\n"
+        caption += bq(e(desc), expandable=True)
+
+        site_url = data.get("siteUrl", "")
+        if site_url:
+            caption += f"\n\n<b>AniList:</b> {site_url}"
+
+        return caption
 
 
 # ================================================================================
@@ -2363,6 +2410,43 @@ async def generate_and_send_post(
     # ── Buttons ───────────────────────────────────────────────────────────────────
     buttons_markup = build_buttons_from_settings(settings)
 
+    # ── Add "Join Now" button per spec (no emoji, clean) ─────────────────────────
+    if buttons_markup:
+        existing_rows = list(buttons_markup.inline_keyboard)
+    else:
+        existing_rows = []
+    # Collect alternate image URLs for navigation (cover sizes)
+    _alt_images: List[str] = []
+    if data and isinstance(data, dict):
+        cov = data.get("coverImage") or {}
+        for sz in ("extraLarge", "large", "medium"):
+            url_ = cov.get(sz)
+            if url_ and url_ not in _alt_images:
+                _alt_images.append(url_)
+        banner = data.get("bannerImage")
+        if banner and banner not in _alt_images:
+            _alt_images.append(banner)
+    if poster_url and poster_url not in _alt_images:
+        _alt_images.insert(0, poster_url)
+
+    # Navigation row if multiple images available
+    nav_row: List[InlineKeyboardButton] = []
+    if len(_alt_images) > 1:
+        img_key = f"imgset_{category}_{search_query or str(media_id)}"
+        _cache_set(img_key, _alt_images)
+        nav_row = [
+            InlineKeyboardButton("⬅", callback_data=f"imgn:0:{img_key}:prev"),
+            InlineKeyboardButton("❌", callback_data="close_message"),
+            InlineKeyboardButton("➡", callback_data=f"imgn:0:{img_key}:next"),
+        ]
+    else:
+        nav_row = [InlineKeyboardButton("❌", callback_data="close_message")]
+
+    # Join Now button (always present, no emoji per spec)
+    join_btn = InlineKeyboardButton("Join Now", url=PUBLIC_ANIME_CHANNEL_URL)
+    nav_keyboard = existing_rows + [[join_btn], nav_row]
+    buttons_markup = InlineKeyboardMarkup(nav_keyboard)
+
     # ── Watermark ─────────────────────────────────────────────────────────────────
     wm_text = settings.get("watermark_text")
     wm_pos = settings.get("watermark_position", "center")
@@ -2599,16 +2683,14 @@ async def show_category_settings_menu(
         f"<b>📝 Custom Caption:</b> {'✅' if settings.get('caption_template') else '❌ Using default'}\n"
         f"<b>🏷 Branding:</b> {'✅' if settings.get('branding') else '❌ None'}"
     )
+    # Spec-compliant SETTINGS PANEL layout
     keyboard = [
-        [bold_button("📝 Caption Template", callback_data=f"cat_caption_{category}"),
-         bold_button("🏷 Branding", callback_data=f"cat_branding_{category}")],
-        [bold_button("🔘 Buttons", callback_data=f"cat_buttons_{category}"),
-         bold_button("🖼 Thumbnail", callback_data=f"cat_thumbnail_{category}")],
-        [bold_button("🔤 Font Style", callback_data=f"cat_font_{category}"),
-         bold_button("💧 Watermark", callback_data=f"cat_watermark_{category}")],
-        [bold_button("🖼 Logo", callback_data=f"cat_logo_{category}"),
-         bold_button("📌 Logo Pos", callback_data=f"cat_logopos_{category}")],
-        [bold_button("🗑 Reset Defaults", callback_data=f"cat_reset_{category}")],
+        [bold_button("CAPTION", callback_data=f"cat_caption_{category}"),
+         bold_button("BUTTON", callback_data=f"cat_buttons_{category}")],
+        [bold_button("TEMPLATE", callback_data=f"cat_thumbnail_{category}"),
+         bold_button("BRANDING", callback_data=f"cat_branding_{category}")],
+        [bold_button("FONT STYLE", callback_data=f"cat_font_{category}")],
+        [bold_button("AUTO UPDATE", callback_data="admin_autoupdate")],
         [bold_button("🔙 BACK", callback_data="admin_category_settings")],
     ]
     markup = InlineKeyboardMarkup(keyboard)
@@ -2725,13 +2807,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # ── Regular user welcome ──────────────────────────────────────────────────────
     keyboard = [
-        [InlineKeyboardButton("🎌 Anime Channel", url=PUBLIC_ANIME_CHANNEL_URL),
-         InlineKeyboardButton("📩 Request Anime", url=REQUEST_CHANNEL_URL)],
-        [InlineKeyboardButton("💬 Contact Admin", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")],
-        [bold_button("ℹ️ About", callback_data="about_bot"),
-         bold_button("❓ Help", callback_data="user_help"),
-         bold_button("❌ Close", callback_data="close_message")],
-    ]
+          [InlineKeyboardButton("ᴀɴɪᴍᴇ ᴄʜᴀɴɴᴇʟ", url=PUBLIC_ANIME_CHANNEL_URL)],
+          [InlineKeyboardButton("ᴄᴏɴᴛᴀᴄᴛ ᴀᴅᴍɪɴ", url=f"https://t.me/{ADMIN_CONTACT_USERNAME}")],
+          [InlineKeyboardButton("ʀᴇǫᴜᴇsᴛ ᴀɴɪᴍᴇ ᴄʜᴀɴɴᴇʟ", url=REQUEST_CHANNEL_URL)],
+          [InlineKeyboardButton("ᴀʙᴏᴜᴛ ᴍᴇ", callback_data="about_bot"),
+           InlineKeyboardButton("ᴄʟᴏsᴇ", callback_data="close_message")],
+      ]
     markup = InlineKeyboardMarkup(keyboard)
 
     # Try to copy welcome message from source channel
@@ -2840,28 +2921,24 @@ async def handle_deep_link(
             name=f"DeepLink {link_id[:8]}",
         )
 
-        await safe_send_message(
-            context.bot, chat_id,
-            b("✅ Here's your exclusive invite link!") + "\n\n"
-            + bq(
-                b("⚠️ This link is personal and expires in ")
-                + code(f"{LINK_EXPIRY_MINUTES} minutes")
-                + b(". Do not share it!")
+        keyboard = [[bold_button("• Join Channel •", url=invite.invite_link)]]
+        await context.bot.send_message(
+            chat_id,
+            small_caps(
+                "<blockquote><b>ʜᴇʀᴇ ɪs ʏᴏᴜʀ ʟɪɴᴋ! ᴄʟɪᴄᴋ ʙᴇʟᴏᴡ ᴛᴏ ᴘʀᴏᴄᴇᴇᴅ</b>\n\n</blockquote>"
+                "<b><u>Note: If the link is expired, please click the post link again to get a new one.</u></b>"
             ),
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton(
-                    f"🔓 Join {e(chat.title or 'Channel')}",
-                    url=invite.invite_link,
-                )
-            ]]),
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
-    except Forbidden:
+    except Forbidden as exc:
         await safe_send_message(
             context.bot, chat_id,
             b("🚫 Bot Access Error") + "\n\n"
             + bq(b("The bot has been removed from that channel. "
                    "Please contact admin.")),
         )
+        logger.error(f"handle_deep_link Forbidden error: {exc}")
     except Exception as exc:
         logger.error(f"handle_deep_link error: {exc}")
         await safe_send_message(
@@ -2876,9 +2953,12 @@ async def handle_deep_link(
 
 @force_sub_required
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Display the help screen."""
+    """Display the help screen (admin only per spec)."""
     uid = update.effective_user.id if update.effective_user else 0
     await delete_update_message(update, context)
+    # Admin-only per spec (#9)
+    if uid not in (ADMIN_ID, OWNER_ID):
+        return
     user_states.pop(uid, None)
     await delete_bot_prompt(context, update.effective_chat.id)
 
@@ -3458,7 +3538,7 @@ async def backup_command(
         return
 
     text = b(f"🔗 Generated Links ({len(links)}):") + "\n\n"
-    for link_id, channel, title, created in links:
+    for link_id, channel, title, src_bot, created, never_exp in links:
         line = f"• {b(e(title or channel))} — <code>t.me/{e(BOT_USERNAME)}?start={e(link_id)}</code>\n"
         if len(text) + len(line) > 3800:
             text += b("…more links truncated.")
@@ -3505,6 +3585,7 @@ async def _register_clone_token(
         username = me.username
         # Register commands on clone bot too
         asyncio.create_task(_register_bot_commands_on_bot(clone_bot))
+        launch_clone_bot(token, username)
         if add_clone_bot(token, username):
             await safe_send_message(
                 context.bot, chat_id,
@@ -3818,21 +3899,23 @@ async def _show_autoforward_menu(
     except Exception:
         active_count = 0
 
-    status = "✅ Active" if active_count > 0 else "❌ None"
+    af_enabled = get_setting("autoforward_enabled", "true")
+    on_off = "ON" if active_count > 0 and af_enabled == "true" else "OFF"
     text = (
-        b("♻️ Auto-Forward Manager") + "\n\n"
-        f"<b>Active Connections:</b> {code(str(active_count))}\n"
-        f"<b>Status:</b> {status}"
+        b("Auto Forward Settings") + "\n\n"
+        f"<b>Status:</b> {on_off}\n"
+        f"<b>Connections:</b> {active_count}"
     )
+    # Spec-compliant AUTO FORWARD PANEL layout
     keyboard = [
-        [bold_button("➕ Add Connection", callback_data="af_add_connection"),
-         bold_button("📋 Connections", callback_data="af_list_connections")],
-        [bold_button("🔍 Filters", callback_data="af_filters_menu"),
-         bold_button("🔄 Replacements", callback_data="af_replacements_menu")],
-        [bold_button("⏱ Delay", callback_data="af_set_delay"),
-         bold_button("📝 Caption", callback_data="af_set_caption")],
-        [bold_button("📦 Bulk Forward", callback_data="af_bulk"),
-         bold_button("🗑 Delete Connection", callback_data="af_delete_connection")],
+        [bold_button("MODE", callback_data="af_set_caption")],
+        [bold_button("MANAGE CONNECTIONS", callback_data="af_list_connections")],
+        [bold_button("SETTINGS", callback_data="af_add_connection"),
+         bold_button("FILTERS", callback_data="af_filters_menu")],
+        [bold_button("REPLACEMENTS", callback_data="af_replacements_menu"),
+         bold_button("DELAY", callback_data="af_set_delay")],
+        [bold_button("BULK FORWARD", callback_data="af_bulk")],
+        [bold_button("TOGGLE ON/OFF", callback_data="af_toggle_all")],
         [bold_button("🔙 BACK", callback_data="admin_back")],
     ]
     await safe_send_message(
@@ -3885,6 +3968,7 @@ async def _do_broadcast(
     users = get_all_users(limit=None, offset=0)
     total = len(users)
     sent = fail = blocked = deleted_count = 0
+    deleted_uids: list = []  # track UIDs of deactivated accounts for DB cleanup
 
     # Log to DB
     try:
@@ -3939,6 +4023,7 @@ async def _do_broadcast(
                 blocked += 1
             elif "deactivated" in err_s or "deleted" in err_s:
                 deleted_count += 1
+                deleted_uids.append(uid)
         except RetryAfter as err:
             await asyncio.sleep(err.retry_after + 1)
             try:
@@ -3973,13 +4058,29 @@ async def _do_broadcast(
         except Exception:
             pass
 
+    # Purge deactivated / deleted accounts from the users table
+    purged = 0
+    if deleted_uids:
+        try:
+            with db_manager.get_cursor() as cur:
+                cur.execute(
+                    "DELETE FROM users WHERE user_id = ANY(%s)",
+                    (deleted_uids,)
+                )
+                purged = cur.rowcount
+        except Exception as exc:
+            logger.debug(f"Purge deleted users error: {exc}")
+
     result = (
         b("📣 Broadcast Complete!") + "\n\n"
-        f"<b>✅ Sent:</b> {code(format_number(sent))}\n"
-        f"<b>❌ Failed:</b> {code(format_number(fail))}\n"
-        f"<b>🚫 Blocked:</b> {code(format_number(blocked))}\n"
-        f"<b>🗑 Deleted accounts:</b> {code(format_number(deleted_count))}\n"
-        f"<b>📊 Total reached:</b> {code(format_number(total))}"
+        + bq(
+            f"<b>✅ Sent:</b> {code(format_number(sent))}\n"
+            f"<b>🚫 Blocked:</b> {code(format_number(blocked))}\n"
+            f"<b>🗑 Deleted accounts:</b> {code(format_number(deleted_count))}\n"
+            f"<b>🧹 Purged from DB:</b> {code(format_number(purged))}\n"
+            f"<b>❌ Other failures:</b> {code(format_number(fail - blocked - deleted_count if fail > 0 else 0))}\n"
+            f"<b>📊 Total users:</b> {code(format_number(total))}"
+        )
     )
 
     if progress_msg:
@@ -4238,7 +4339,7 @@ async def inline_query_handler(
 async def group_message_handler(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Handle messages in bot-connected groups."""
+    """Handle messages in bot-connected groups with auto-delete support."""
     if not update.message or not update.effective_chat:
         return
     if get_setting("group_commands_enabled", "true") != "true":
@@ -4258,6 +4359,18 @@ async def group_message_handler(
 
     text = update.message.text or ""
     lower = text.lower()
+    auto_del = get_setting("auto_delete_messages", "true") == "true"
+    del_delay = int(get_setting("auto_delete_delay", "60"))
+
+    # Schedule auto-delete of user command after 5 seconds
+    if auto_del:
+        async def _del_user_cmd(msg=update.message):
+            await asyncio.sleep(5)
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+        asyncio.create_task(_del_user_cmd())
 
     for prefix, category in [
         ("/anime ", "anime"), ("/manga ", "manga"),
@@ -4267,7 +4380,7 @@ async def group_message_handler(
             query_text = text[len(prefix):].strip()
             if query_text:
                 await generate_and_send_post(context, chat_id, category, query_text)
-                return
+            return
 
 
 # ================================================================================
@@ -4644,6 +4757,191 @@ async def check_scheduled_broadcasts(context: ContextTypes.DEFAULT_TYPE) -> None
 
 # ================================================================================
 #                         MANGA UPDATE JOB (COMPLETE)
+
+# ================================================================================
+#                         CLONE BOT — INDEPENDENT POLLING
+# ================================================================================
+
+def _register_all_handlers(app: Application) -> None:
+    """Register every bot handler on the given Application instance."""
+    admin_filter = filters.User(user_id=ADMIN_ID) | filters.User(user_id=OWNER_ID)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("ping", ping_command))
+    app.add_handler(CommandHandler("alive", alive_command))
+    app.add_handler(CommandHandler("test", test_command))
+    app.add_handler(CommandHandler("search", search_command))
+    app.add_handler(CommandHandler("anime", anime_command))
+    app.add_handler(CommandHandler("manga", manga_command))
+    app.add_handler(CommandHandler("movie", movie_command))
+    app.add_handler(CommandHandler("tvshow", tvshow_command))
+    app.add_handler(CommandHandler("id", id_command))
+    app.add_handler(CommandHandler("info", info_command))
+    app.add_handler(CommandHandler("stats", stats_command, filters=admin_filter))
+    app.add_handler(CommandHandler("sysstats", sysstats_command, filters=admin_filter))
+    app.add_handler(CommandHandler("users", users_command, filters=admin_filter))
+    app.add_handler(CommandHandler("cmd", cmd_command, filters=admin_filter))
+    app.add_handler(CommandHandler("upload", upload_command, filters=admin_filter))
+    app.add_handler(CommandHandler("settings", settings_command, filters=admin_filter))
+    app.add_handler(CommandHandler("autoupdate", autoupdate_command, filters=admin_filter))
+    app.add_handler(CommandHandler("autoforward", autoforward_command, filters=admin_filter))
+    app.add_handler(CommandHandler("addchannel", add_channel_command, filters=admin_filter))
+    app.add_handler(CommandHandler("removechannel", remove_channel_command, filters=admin_filter))
+    app.add_handler(CommandHandler("banuser", ban_user_command, filters=admin_filter))
+    app.add_handler(CommandHandler("unbanuser", unban_user_command, filters=admin_filter))
+    app.add_handler(CommandHandler("listusers", listusers_command, filters=admin_filter))
+    app.add_handler(CommandHandler("deleteuser", deleteuser_command, filters=admin_filter))
+    app.add_handler(CommandHandler("exportusers", exportusers_command, filters=admin_filter))
+    app.add_handler(CommandHandler("backup", backup_command, filters=admin_filter))
+    app.add_handler(CommandHandler("addclone", addclone_command, filters=admin_filter))
+    app.add_handler(CommandHandler("clones", clones_command, filters=admin_filter))
+    app.add_handler(CommandHandler("reload", reload_command, filters=admin_filter))
+    app.add_handler(CommandHandler("restart", reload_command, filters=admin_filter))
+    app.add_handler(CommandHandler("logs", logs_command, filters=admin_filter))
+    app.add_handler(CommandHandler("connect", connect_command, filters=admin_filter))
+    app.add_handler(CommandHandler("disconnect", disconnect_command, filters=admin_filter))
+    app.add_handler(CommandHandler("connections", connections_command, filters=admin_filter))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(admin_filter & ~filters.COMMAND, handle_admin_message))
+    app.add_handler(MessageHandler(
+        filters.ChatType.GROUPS & filters.TEXT & ~filters.COMMAND, group_message_handler))
+    app.add_handler(InlineQueryHandler(inline_query_handler))
+    app.add_handler(MessageHandler(filters.ChatType.CHANNEL, auto_forward_message_handler))
+    app.add_handler(MessageHandler(
+        filters.ChatType.CHANNEL & filters.VIDEO, handle_channel_post))
+    app.add_handler(MessageHandler(
+        filters.ChatType.PRIVATE & filters.VIDEO & admin_filter, handle_upload_video))
+    app.add_handler(MessageHandler(
+        filters.ChatType.PRIVATE & (filters.PHOTO | filters.Document.IMAGE) & admin_filter,
+        handle_admin_photo))
+    app.add_error_handler(error_handler)
+
+
+async def _run_clone_polling(token: str, uname: str) -> None:
+    """Run a clone bot as an independent Application with all handlers."""
+    logger.info(f"🤖 Starting clone bot @{uname} polling...")
+    try:
+        app = (
+            Application.builder()
+            .token(token)
+            .connect_timeout(30)
+            .read_timeout(30)
+            .write_timeout(30)
+            .build()
+        )
+        _register_all_handlers(app)
+        async with app:
+            await app.initialize()
+            await app.start()
+            if app.updater:
+                await app.updater.start_polling(
+                    allowed_updates=Update.ALL_TYPES,
+                    drop_pending_updates=True,
+                )
+            logger.info(f"✅ Clone @{uname} polling started")
+            # Run until cancelled
+            while app.running:
+                await asyncio.sleep(5)
+    except asyncio.CancelledError:
+        logger.info(f"🛑 Clone @{uname} polling cancelled")
+    except Exception as exc:
+        logger.error(f"❌ Clone @{uname} error: {exc}")
+
+
+def launch_clone_bot(token: str, uname: str) -> None:
+    """Schedule a clone bot polling task on the running event loop."""
+    if uname in _clone_tasks:
+        existing = _clone_tasks[uname]
+        if not existing.done():
+            logger.info(f"Clone @{uname} already running")
+            return
+    task = asyncio.ensure_future(_run_clone_polling(token, uname))
+    _clone_tasks[uname] = task
+    logger.info(f"🤖 Clone @{uname} task scheduled")
+
+
+# ================================================================================
+#                         MANGA CHAPTER — PDF DELIVERY
+# ================================================================================
+
+async def _deliver_chapter_as_pdf(
+    bot, chat_id: int, manga_title: str, ch_num: str, chapter_id: str
+) -> bool:
+    """Download MangaDex chapter pages and send as a PDF document.
+    Falls back to sending page images if PDF libraries are unavailable.
+    Returns True on success.
+    """
+    import io as _io
+    try:
+        pages = MangaDexClient.get_chapter_pages(chapter_id)
+        if not pages:
+            return False
+        base_url, ch_hash, filenames = pages
+        if not filenames:
+            return False
+        import urllib.request as _req
+        # Download pages (cap at 60 pages)
+        page_bytes: list = []
+        for fn in filenames[:60]:
+            url = f"{base_url}/data/{ch_hash}/{fn}"
+            try:
+                with _req.urlopen(url, timeout=20) as resp:
+                    page_bytes.append(resp.read())
+                await asyncio.sleep(0.1)
+            except Exception:
+                pass
+        if not page_bytes:
+            return False
+        safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in manga_title)
+        filename = f"{safe_title}_Chapter_{ch_num}.pdf"
+        # Try fpdf2 first
+        try:
+            import tempfile, os as _os
+            from fpdf import FPDF
+            pdf = FPDF()
+            with tempfile.TemporaryDirectory() as tmpdir:
+                for i, pb in enumerate(page_bytes):
+                    img_path = _os.path.join(tmpdir, f"p{i}.jpg")
+                    with open(img_path, "wb") as f:
+                        f.write(pb)
+                    pdf.add_page()
+                    pdf.image(img_path, 0, 0, 210)
+                pdf_bytes = bytes(pdf.output())
+        except ImportError:
+            # Fallback: try Pillow
+            try:
+                from PIL import Image as _Img
+                imgs = [_Img.open(_io.BytesIO(pb)).convert("RGB") for pb in page_bytes]
+                pdf_io = _io.BytesIO()
+                imgs[0].save(pdf_io, format="PDF", save_all=True, append_images=imgs[1:])
+                pdf_bytes = pdf_io.getvalue()
+            except Exception:
+                # Last fallback: send pages as individual images
+                media_group = []
+                for i, pb in enumerate(page_bytes[:10]):
+                    media_group.append({"type": "photo", "media": _io.BytesIO(pb)})
+                if media_group:
+                    cap = f"📖 <b>{manga_title}</b> — Chapter {ch_num} (images)"
+                    await bot.send_photo(
+                        chat_id,
+                        photo=_io.BytesIO(page_bytes[0]),
+                        caption=cap,
+                        parse_mode=ParseMode.HTML,
+                    )
+                return True
+        await bot.send_document(
+            chat_id,
+            document=_io.BytesIO(pdf_bytes),
+            filename=filename,
+            caption=f"📖 <b>{manga_title}</b> — Chapter {ch_num}",
+            parse_mode=ParseMode.HTML,
+        )
+        return True
+    except Exception as exc:
+        logger.error(f"_deliver_chapter_as_pdf error: {exc}")
+        return False
+
+
 # ================================================================================
 
 async def manga_update_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -4739,7 +5037,7 @@ async def post_init(application: Application) -> None:
     # Register commands on this bot
     await _register_bot_commands_on_bot(application.bot)
 
-    # Register commands on all clone bots
+    # Register commands and start polling for all clone bots
     try:
         clones = get_all_clone_bots(active_only=True)
         for _, token, uname, _, _ in clones:
@@ -4747,10 +5045,12 @@ async def post_init(application: Application) -> None:
                 clone_bot = Bot(token=token)
                 await _register_bot_commands_on_bot(clone_bot)
                 logger.info(f"✅ Commands registered on clone @{uname}")
+                # Launch clone as independent Application (non-blocking)
+                launch_clone_bot(token, uname)
             except Exception as exc:
-                logger.warning(f"Could not register commands on clone @{uname}: {exc}")
+                logger.warning(f"Could not start clone @{uname}: {exc}")
     except Exception as exc:
-        logger.warning(f"Could not iterate clones for command registration: {exc}")
+        logger.warning(f"Could not iterate clones: {exc}")
 
     # Start health check server
     try:
@@ -4828,31 +5128,25 @@ async def _register_bot_commands_on_bot(bot: Bot) -> None:
 
 
 async def _send_restart_notification(bot: Bot) -> None:
-    """Send restart notification to admin."""
+    """Send restart notification to admin on every start (deploy, wake, manual restart)."""
     triggered_by = BOT_USERNAME
     try:
         if os.path.exists("restart_message.json"):
             with open("restart_message.json") as f:
                 rinfo = json.load(f)
             triggered_by = rinfo.get("triggered_by", BOT_USERNAME)
+            try:
+                os.remove("restart_message.json")
+            except Exception:
+                pass
     except Exception:
         pass
 
-    time_str = now_utc().strftime("%d %b %Y %H:%M UTC")
-    text = (
-        b(f"🔄 Bot Restarted!") + "\n\n"
-        + bq(
-            f"<b>Triggered by:</b> @{e(triggered_by)}\n"
-            f"<b>Time:</b> {time_str}\n"
-            f"<b>Mode:</b> {'Clone' if I_AM_CLONE else 'Main'}\n"
-            f"<b>Username:</b> @{e(BOT_USERNAME)}"
-        )
-    )
+    text = f"<blockquote><b>Bᴏᴛ Rᴇsᴛᴀʀᴛᴇᴅ by @{e(triggered_by)}</b></blockquote>"
     try:
         await bot.send_message(ADMIN_ID, text, parse_mode=ParseMode.HTML)
     except Exception as exc:
         logger.warning(f"Could not send restart notification: {exc}")
-
 
 async def post_shutdown(application: Application) -> None:
     """Cleanup on bot shutdown."""
@@ -4941,21 +5235,24 @@ async def error_handler(
 
 @force_sub_required
 async def button_handler(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
+    update: Update, context: ContextTypes.DEFAULT_TYPE, _data_override: str = None
 ) -> None:
     """
     Central callback query router.
     Answers every query immediately to prevent timeout errors.
     All callbacks are handled exhaustively.
+    Accepts _data_override to allow internal re-routing without modifying
+    the read-only query.data attribute.
     """
     query = update.callback_query
     if not query:
         return
 
-    # Always answer immediately to prevent "query too old"
-    await safe_answer(query)
+    # Answer only on real calls, not on internal re-routes
+    if _data_override is None:
+        await safe_answer(query)
 
-    data = query.data or ""
+    data = _data_override if _data_override is not None else (query.data or "")
     uid = query.from_user.id if query.from_user else 0
     chat_id = query.message.chat_id if query.message else uid
 
@@ -4970,6 +5267,47 @@ async def button_handler(
             await query.delete_message()
         except Exception:
             pass
+        return
+
+    # ── Image navigation (edit_message_media, no new message) ──────────────────────
+    if data.startswith("imgn:"):
+        try:
+            parts = data.split(":", 3)
+            # Format: imgn:{current_idx}:{img_key}:{direction}
+            if len(parts) == 4:
+                _, cur_idx_str, img_key, direction = parts
+                cur_idx = int(cur_idx_str)
+                images = _cache_get(img_key)
+                if images and isinstance(images, list) and len(images) > 1:
+                    await safe_answer(query, "Generating...")
+                    if direction == "next":
+                        new_idx = (cur_idx + 1) % len(images)
+                    else:
+                        new_idx = (cur_idx - 1) % len(images)
+                    new_url = images[new_idx]
+                    # Rebuild navigation keyboard with updated index
+                    new_kb = [
+                        [InlineKeyboardButton("⬅", callback_data=f"imgn:{new_idx}:{img_key}:prev"),
+                         InlineKeyboardButton("❌", callback_data="close_message"),
+                         InlineKeyboardButton("➡", callback_data=f"imgn:{new_idx}:{img_key}:next")],
+                    ]
+                    # Preserve existing top rows from the current keyboard (except nav row)
+                    if query.message and query.message.reply_markup:
+                        old_rows = list(query.message.reply_markup.inline_keyboard)
+                        # Drop last row (old nav) and append new nav
+                        top_rows = old_rows[:-1] if old_rows else []
+                        new_kb = top_rows + new_kb
+                    try:
+                        await query.message.edit_media(
+                            InputMediaPhoto(media=new_url),
+                            reply_markup=InlineKeyboardMarkup(new_kb),
+                        )
+                    except Exception:
+                        pass
+                else:
+                    await safe_answer(query, "No more images.")
+        except Exception as exc:
+            logger.debug(f"imgn handler error: {exc}")
         return
 
     if data == "verify_subscription":
@@ -5208,8 +5546,7 @@ async def button_handler(
         uname = data[len("fs_del_"):]
         delete_force_sub_channel(uname)
         await safe_answer(query, f"Removed {uname}")
-        query.data = "manage_force_sub"
-        await button_handler(update, context)
+        await button_handler(update, context, "manage_force_sub")
         return
 
     # ── Link generation ────────────────────────────────────────────────────────────
@@ -5292,8 +5629,7 @@ async def button_handler(
         uname = data[len("clone_del_"):]
         remove_clone_bot(uname)
         await safe_answer(query, f"Removed @{uname}")
-        query.data = "manage_clones"
-        await button_handler(update, context)
+        await button_handler(update, context, "manage_clones")
         return
 
     if data == "clone_refresh_cmds":
@@ -5312,8 +5648,7 @@ async def button_handler(
             except Exception:
                 pass
         await safe_answer(query, f"Commands refreshed on {count} clone(s).")
-        query.data = "manage_clones"
-        await button_handler(update, context)
+        await button_handler(update, context, "manage_clones")
         return
 
     # ── Admin settings ─────────────────────────────────────────────────────────────
@@ -5346,8 +5681,7 @@ async def button_handler(
         new_val = "false" if current == "true" else "true"
         set_setting("maintenance_mode", new_val)
         await safe_answer(query, f"Maintenance {'ON' if new_val == 'true' else 'OFF'}")
-        query.data = "admin_settings"
-        await button_handler(update, context)
+        await button_handler(update, context, "admin_settings")
         return
 
     if data == "toggle_clone_redirect":
@@ -5357,8 +5691,7 @@ async def button_handler(
         new_val = "false" if current == "true" else "true"
         set_setting("clone_redirect_enabled", new_val)
         await safe_answer(query, f"Clone redirect {'ON' if new_val == 'true' else 'OFF'}")
-        query.data = "admin_settings"
-        await button_handler(update, context)
+        await button_handler(update, context, "admin_settings")
         return
 
     if data == "set_backup_channel":
@@ -5398,15 +5731,19 @@ async def button_handler(
     if data == "admin_category_settings":
         if not is_admin:
             return
+        # Spec-compliant START PANEL / POST SETTING layout
         keyboard = [
-            [bold_button("🎌 Anime", callback_data="admin_category_settings_anime"),
-             bold_button("📚 Manga", callback_data="admin_category_settings_manga")],
-            [bold_button("🎬 Movie", callback_data="admin_category_settings_movie"),
-             bold_button("📺 TV Show", callback_data="admin_category_settings_tvshow")],
+            [bold_button("TV SHOWS", callback_data="admin_category_settings_tvshow"),
+             bold_button("MOVIES", callback_data="admin_category_settings_movie")],
+            [bold_button("ANIME", callback_data="admin_category_settings_anime"),
+             bold_button("MANGA", callback_data="admin_category_settings_manga")],
+            [bold_button("POST SETTING", callback_data="admin_settings")],
+            [bold_button("AUTO FORWARD", callback_data="admin_autoforward"),
+             bold_button("POST SEARCH", callback_data="admin_cmd_list")],
             [bold_button("🔙 BACK", callback_data="admin_back")],
         ]
         await safe_edit_text(
-            query, b("⚙️ Select category to configure:"),
+            query, b("Choose the category"),
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
         return
@@ -5847,8 +6184,8 @@ async def button_handler(
             return
         ban_user(target_uid)
         await safe_answer(query, "User banned.")
-        query.data = f"manage_user_{target_uid}"
-        await button_handler(update, context)
+        await button_handler(update, context, f"manage_user_{target_uid}")
+
         return
 
     if data.startswith("user_unban_"):
@@ -5857,8 +6194,8 @@ async def button_handler(
         target_uid = int(data[len("user_unban_"):])
         unban_user(target_uid)
         await safe_answer(query, "User unbanned.")
-        query.data = f"manage_user_{target_uid}"
-        await button_handler(update, context)
+        await button_handler(update, context, f"manage_user_{target_uid}")
+
         return
 
     if data.startswith("user_del_"):
@@ -5875,8 +6212,8 @@ async def button_handler(
             await safe_answer(query, "Error deleting user.")
             return
         await safe_answer(query, "User deleted.")
-        query.data = "user_management"
-        await button_handler(update, context)
+        await button_handler(update, context, "user_management")
+
         return
 
     # ── Search results ─────────────────────────────────────────────────────────────
@@ -6079,11 +6416,10 @@ async def button_handler(
         except Exception:
             pass
         await safe_answer(query, f"Connection #{conn_id} deleted.")
-        query.data = "af_list_connections"
-        await button_handler(update, context)
+        await button_handler(update, context, "af_list_connections")
         return
 
-    if data in ("af_filters_menu", "af_replacements_menu", "af_set_delay",
+    if data in ("af_replacements_menu", "af_set_delay",
                 "af_set_caption", "af_bulk", "af_delete_connection"):
         if not is_admin:
             return
@@ -6095,6 +6431,102 @@ async def button_handler(
                  + b("Use /autoforward to access the full manager from the admin panel.")),
             reply_markup=InlineKeyboardMarkup([[bold_button("🔙 Back", callback_data="admin_autoforward")]]),
         )
+        return
+
+    # ── Auto-forward filters panel with DM / Group toggles ────────────────────────
+    if data == "af_filters_menu":
+        if not is_admin:
+            return
+        # Load current filter settings for connection 0 (global) or first active connection
+        dm_on = True
+        grp_on = True
+        try:
+            with db_manager.get_cursor() as cur:
+                cur.execute(
+                    "SELECT enable_in_dm, enable_in_group FROM auto_forward_filters LIMIT 1"
+                )
+                row = cur.fetchone()
+                if row:
+                    dm_on, grp_on = bool(row[0]), bool(row[1])
+        except Exception:
+            pass
+        dm_icon = "✅" if dm_on else "❌"
+        grp_icon = "✅" if grp_on else "❌"
+        ftext = (
+            b("🔍 Auto-Forward Filters") + "\n\n"
+            + bq(
+                f"<b>Enable in DM:</b> {dm_icon}\n"
+                f"<b>Enable in Group:</b> {grp_icon}"
+            )
+        )
+        fkb = [
+            [bold_button(f"{dm_icon} Toggle DM", callback_data="af_toggle_dm"),
+             bold_button(f"{grp_icon} Toggle Group", callback_data="af_toggle_group")],
+            [bold_button("🚫 Blacklist Words", callback_data="af_blacklist"),
+             bold_button("✅ Whitelist Words", callback_data="af_whitelist")],
+            [bold_button("🔙 Back", callback_data="admin_autoforward")],
+        ]
+        await safe_edit_text(query, ftext, reply_markup=InlineKeyboardMarkup(fkb))
+        return
+
+    if data == "af_toggle_all":
+        if not is_admin:
+            return
+        current = get_setting("autoforward_enabled", "true")
+        new_val = "false" if current == "true" else "true"
+        set_setting("autoforward_enabled", new_val)
+        await safe_answer(query, f"Auto-Forward {'enabled' if new_val == 'true' else 'disabled'}!")
+        try:
+            await query.delete_message()
+        except Exception:
+            pass
+        await _show_autoforward_menu(context, chat_id)
+        return
+
+    if data in ("af_toggle_dm", "af_toggle_group"):
+        if not is_admin:
+            return
+        col = "enable_in_dm" if data == "af_toggle_dm" else "enable_in_group"
+        try:
+            with db_manager.get_cursor() as cur:
+                cur.execute(
+                    f"UPDATE auto_forward_filters SET {col} = NOT {col}"
+                )
+                if cur.rowcount == 0:
+                    cur.execute(
+                        "INSERT INTO auto_forward_filters (enable_in_dm, enable_in_group) VALUES (TRUE, TRUE)"
+                    )
+        except Exception as exc:
+            logger.debug(f"af toggle error: {exc}")
+        await safe_answer(query, "Filter toggled!")
+        await button_handler(update, context, "af_filters_menu")
+        return
+
+    if data in ("af_blacklist", "af_whitelist"):
+        if not is_admin:
+            return
+        kind = "Blacklist" if data == "af_blacklist" else "Whitelist"
+        col = "blacklist_words" if data == "af_blacklist" else "whitelist_words"
+        words = ""
+        try:
+            with db_manager.get_cursor() as cur:
+                cur.execute(f"SELECT {col} FROM auto_forward_filters LIMIT 1")
+                row = cur.fetchone()
+                if row and row[0]:
+                    words = row[0]
+        except Exception:
+            pass
+        await safe_edit_text(
+            query,
+            b(f"📝 {kind} Words") + "\n\n"
+            + bq(
+                f"<b>Current:</b> {code(e(words or 'None'))}\n\n"
+                "Send new comma-separated words to set the list:\n"
+                "<i>e.g. word1, word2, word3</i>"
+            ),
+            reply_markup=InlineKeyboardMarkup([[bold_button("🔙 Back", callback_data="af_filters_menu")]]),
+        )
+        user_states[uid] = f"af_set_{col}"
         return
 
     # ── Auto manga update menu ─────────────────────────────────────────────────────
@@ -6142,15 +6574,13 @@ async def button_handler(
         manga_id = data[len("au_stop_"):]
         MangaTracker.remove_tracking(manga_id)
         await safe_answer(query, "Tracking stopped.")
-        query.data = "au_list_manga"
-        await button_handler(update, context)
+        await button_handler(update, context, "au_list_manga")
         return
 
     if data == "au_remove_manga":
         if not is_admin:
             return
-        query.data = "au_list_manga"
-        await button_handler(update, context)
+        await button_handler(update, context, "au_list_manga")
         return
 
     if data == "au_stats":
@@ -6298,8 +6728,7 @@ async def button_handler(
             upload_progress["selected_qualities"].append(q_val)
         await save_upload_progress()
         await safe_answer(query, f"{'Added' if q_val in upload_progress['selected_qualities'] else 'Removed'} {q_val}")
-        query.data = "upload_quality_menu"
-        await button_handler(update, context)
+        await button_handler(update, context, "upload_quality_menu")
         return
 
     if data == "upload_toggle_auto":
