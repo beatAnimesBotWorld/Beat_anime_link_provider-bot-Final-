@@ -201,6 +201,47 @@ _clone_tasks: Dict[str, Any] = {}  # running clone asyncio tasks
 _api_cache: Dict[str, Any] = {}
 _API_CACHE_TTL: int = 300  # 5 minutes
 
+# ── Filter system (DM/group/user/chat filtering) ──────────────────────────────
+filters_config: Dict[str, Any] = {
+    "global": {"dm": True, "group": True},
+    "commands": {},
+    "banned_users": set(),
+    "disabled_chats": set(),
+}
+
+
+def _passes_filter(update: "Update", command: str = "") -> bool:
+    """Check if a message passes the filter system. Returns False to block."""
+    user = update.effective_user
+    chat = update.effective_chat
+    if not user or not chat:
+        return True
+    uid = user.id
+    cid = chat.id
+    # Always allow admins
+    if uid in (ADMIN_ID, OWNER_ID):
+        return True
+    # Banned users
+    if uid in filters_config["banned_users"]:
+        return False
+    # Disabled chats
+    if cid in filters_config["disabled_chats"]:
+        return False
+    # Global DM/group toggle
+    is_private = chat.type == "private"
+    if is_private and not filters_config["global"].get("dm", True):
+        return False
+    if not is_private and not filters_config["global"].get("group", True):
+        return False
+    # Per-command filter
+    if command and command in filters_config["commands"]:
+        cmd_cfg = filters_config["commands"][command]
+        if is_private and not cmd_cfg.get("dm", True):
+            return False
+        if not is_private and not cmd_cfg.get("group", True):
+            return False
+    return True
+
 
 def _cache_get(key: str) -> Optional[Any]:
     """Get a value from the API cache if not expired."""
@@ -286,7 +327,8 @@ def _cache_set(key: str, data: Any) -> None:
     AU_ADD_MANGA_TITLE,
     AU_ADD_MANGA_TARGET,
     AU_REMOVE_MANGA,
-) = range(33, 36)
+    AU_CUSTOM_INTERVAL,
+) = range(33, 37)
 
 # Upload states
 (
@@ -2278,10 +2320,12 @@ async def generate_and_send_post(
     search_query: str = "",
     media_id: Optional[int] = None,
     source_manga_id: Optional[str] = None,
+    preferred_size: str = "extraLarge",
 ) -> bool:
     """
     Full post generation for anime, manga, movie, tvshow.
     Returns True on success.
+    preferred_size: 'extraLarge' | 'large' | 'medium' | 'bannerImage'
     """
     settings = get_category_settings(category)
     data: Optional[Dict] = None
@@ -2309,9 +2353,15 @@ async def generate_and_send_post(
             branding = settings.get("branding", "")
             if branding:
                 caption_text += f"\n\n{branding}"
-            # Poster
+            # Poster — honour preferred_size, fall back through sizes
             cover = (data.get("coverImage") or {})
-            poster_url = cover.get("extraLarge") or cover.get("large") or cover.get("medium")
+            if preferred_size == "bannerImage":
+                poster_url = data.get("bannerImage") or cover.get("extraLarge") or cover.get("large") or cover.get("medium")
+            else:
+                size_order = ["extraLarge", "large", "medium"] if preferred_size != "medium" else ["medium", "large", "extraLarge"]
+                if preferred_size == "large":
+                    size_order = ["large", "extraLarge", "medium"]
+                poster_url = next((cover.get(s) for s in size_order if cover.get(s)), None)
 
         elif category == "manga":
             if source_manga_id:
@@ -2350,7 +2400,13 @@ async def generate_and_send_post(
                     tmpl = settings.get("caption_template", "")
                     caption_text = AniListClient.format_manga_caption(data, tmpl if tmpl else None)
                     cover = (data.get("coverImage") or {})
-                    poster_url = cover.get("extraLarge") or cover.get("large") or cover.get("medium")
+                    if preferred_size == "bannerImage":
+                        poster_url = data.get("bannerImage") or cover.get("extraLarge") or cover.get("large") or cover.get("medium")
+                    else:
+                        size_order = ["extraLarge", "large", "medium"] if preferred_size != "medium" else ["medium", "large", "extraLarge"]
+                        if preferred_size == "large":
+                            size_order = ["large", "extraLarge", "medium"]
+                        poster_url = next((cover.get(s) for s in size_order if cover.get(s)), None)
             branding = settings.get("branding", "")
             if branding:
                 caption_text += f"\n\n{branding}"
@@ -2433,14 +2489,15 @@ async def generate_and_send_post(
     nav_row: List[InlineKeyboardButton] = []
     if len(_alt_images) > 1:
         img_key = f"imgset_{category}_{search_query or str(media_id)}"
-        _cache_set(img_key, _alt_images)
+        # Store urls + caption so navigation can restore info text
+        _cache_set(img_key, {"urls": _alt_images, "caption": caption_text, "shown": set()})
         nav_row = [
-            InlineKeyboardButton("⬅", callback_data=f"imgn:0:{img_key}:prev"),
-            InlineKeyboardButton("❌", callback_data="close_message"),
-            InlineKeyboardButton("➡", callback_data=f"imgn:0:{img_key}:next"),
+            InlineKeyboardButton("◀", callback_data=f"imgn:0:{img_key}:prev"),
+            InlineKeyboardButton("✕", callback_data="close_message"),
+            InlineKeyboardButton("▶", callback_data=f"imgn:0:{img_key}:next"),
         ]
     else:
-        nav_row = [InlineKeyboardButton("❌", callback_data="close_message")]
+        nav_row = [InlineKeyboardButton("✕", callback_data="close_message")]
 
     # Join Now button (always present, no emoji per spec)
     join_btn = InlineKeyboardButton("Join Now", url=PUBLIC_ANIME_CHANNEL_URL)
@@ -2565,22 +2622,23 @@ async def send_admin_menu(
     clone_label = "🔀 Clone Redirect: ON" if clone_redirect == "true" else "🔀 Clone Redirect: OFF"
 
     keyboard = [
-        [bold_button("📊 Stats", callback_data="admin_stats"),
-         bold_button("💻 System", callback_data="admin_sysstats")],
-        [bold_button("📢 Force-Sub", callback_data="manage_force_sub"),
-         bold_button("🔗 Generate Link", callback_data="generate_links")],
-        [bold_button("📣 Broadcast", callback_data="admin_broadcast_start"),
-         bold_button("👤 Users", callback_data="user_management")],
-        [bold_button("🤖 Clone Bots", callback_data="manage_clones"),
-         bold_button("⚙️ Settings", callback_data="admin_settings")],
-        [bold_button("♻️ Auto-Forward", callback_data="admin_autoforward"),
-         bold_button("📚 Manga Track", callback_data="admin_autoupdate")],
-        [bold_button("🚩 Feature Flags", callback_data="admin_feature_flags"),
-         bold_button("📤 Upload Mgr", callback_data="upload_menu")],
-        [bold_button("🎌 Category Config", callback_data="admin_category_settings"),
-         bold_button("📜 Commands", callback_data="admin_cmd_list")],
-        [bold_button("🔄 Restart Bot", callback_data="admin_restart_confirm"),
-         bold_button("📋 Logs", callback_data="admin_logs")],
+        [bold_button("STATS", callback_data="admin_stats"),
+         bold_button("SYSTEM", callback_data="admin_sysstats")],
+        [bold_button("FORCE SUB", callback_data="manage_force_sub"),
+         bold_button("LINKS", callback_data="generate_links")],
+        [bold_button("BROADCAST", callback_data="admin_broadcast_start"),
+         bold_button("USERS", callback_data="user_management")],
+        [bold_button("CLONES", callback_data="manage_clones"),
+         bold_button("SETTINGS", callback_data="admin_settings")],
+        [bold_button("AUTO FORWARD", callback_data="admin_autoforward"),
+         bold_button("MANGA", callback_data="admin_autoupdate")],
+        [bold_button("FLAGS", callback_data="admin_feature_flags"),
+         bold_button("FILTERS", callback_data="admin_filter_settings")],
+        [bold_button("CATEGORIES", callback_data="admin_category_settings"),
+         bold_button("UPLOAD", callback_data="upload_menu")],
+        [bold_button("COMMANDS", callback_data="admin_cmd_list"),
+         bold_button("LOGS", callback_data="admin_logs")],
+        [bold_button("RESTART", callback_data="admin_restart_confirm")],
     ]
     text = (
         b("🛠 Admin Control Panel") + "\n\n"
@@ -3137,6 +3195,8 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 @force_sub_required
 async def anime_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _passes_filter(update, "anime"):
+        return
     await delete_update_message(update, context)
     if not context.args:
         await safe_reply(update, b("Usage: /anime [name]") + "\n" + bq("<b>Example:</b> /anime Naruto"))
@@ -3147,6 +3207,8 @@ async def anime_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @force_sub_required
 async def manga_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _passes_filter(update, "manga"):
+        return
     await delete_update_message(update, context)
     if not context.args:
         await safe_reply(update, b("Usage: /manga [name]") + "\n" + bq("<b>Example:</b> /manga One Piece"))
@@ -3157,6 +3219,8 @@ async def manga_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @force_sub_required
 async def movie_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _passes_filter(update, "movie"):
+        return
     await delete_update_message(update, context)
     if not context.args:
         await safe_reply(update, b("Usage: /movie [name]") + "\n" + bq("<b>Example:</b> /movie Avengers"))
@@ -3170,6 +3234,8 @@ async def movie_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @force_sub_required
 async def tvshow_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _passes_filter(update, "tvshow"):
+        return
     await delete_update_message(update, context)
     if not context.args:
         await safe_reply(update, b("Usage: /tvshow [name]") + "\n" + bq("<b>Example:</b> /tvshow Breaking Bad"))
@@ -4344,6 +4410,8 @@ async def group_message_handler(
         return
     if get_setting("group_commands_enabled", "true") != "true":
         return
+    if not _passes_filter(update):
+        return
 
     chat_id = update.effective_chat.id
     try:
@@ -4372,6 +4440,9 @@ async def group_message_handler(
                 pass
         asyncio.create_task(_del_user_cmd())
 
+    async def _group_post_with_autodel(category: str, query_text: str) -> None:
+        await generate_and_send_post(context, chat_id, category, query_text)
+
     for prefix, category in [
         ("/anime ", "anime"), ("/manga ", "manga"),
         ("/movie ", "movie"), ("/tvshow ", "tvshow"),
@@ -4379,7 +4450,7 @@ async def group_message_handler(
         if lower.startswith(prefix):
             query_text = text[len(prefix):].strip()
             if query_text:
-                await generate_and_send_post(context, chat_id, category, query_text)
+                await _group_post_with_autodel(category, query_text)
             return
 
 
@@ -5115,16 +5186,22 @@ async def _register_bot_commands_on_bot(bot: Bot) -> None:
     ]
 
     try:
-        # Default commands for all users
         await bot.set_my_commands(user_commands)
-        # Admin-specific commands (private chat scope)
+    except Exception as exc:
+        logger.warning(f"Command registration (user) failed: {exc}")
+        return
+    try:
         await bot.set_my_commands(
             admin_commands,
             scope=BotCommandScopeChat(chat_id=ADMIN_ID),
         )
-        logger.info(f"✅ Commands registered on @{(await bot.get_me()).username}")
     except Exception as exc:
-        logger.warning(f"Command registration failed: {exc}")
+        logger.warning(f"Command registration (admin scope) failed: {exc}")
+    try:
+        me = await bot.get_me()
+        logger.info(f"✅ Commands registered on @{me.username}")
+    except Exception:
+        pass
 
 
 async def _send_restart_notification(bot: Bot) -> None:
@@ -5277,35 +5354,72 @@ async def button_handler(
             if len(parts) == 4:
                 _, cur_idx_str, img_key, direction = parts
                 cur_idx = int(cur_idx_str)
-                images = _cache_get(img_key)
-                if images and isinstance(images, list) and len(images) > 1:
-                    await safe_answer(query, "Generating...")
-                    if direction == "next":
-                        new_idx = (cur_idx + 1) % len(images)
-                    else:
-                        new_idx = (cur_idx - 1) % len(images)
+                entry = _cache_get(img_key)
+                # Support both old list format and new dict format
+                if isinstance(entry, list):
+                    images = entry
+                    saved_caption = ""
+                    shown_set: set = set()
+                elif isinstance(entry, dict):
+                    images = entry.get("urls", [])
+                    saved_caption = entry.get("caption", "")
+                    shown_set = entry.get("shown", set())
+                else:
+                    images = []
+                    saved_caption = ""
+                    shown_set = set()
+
+                if images and len(images) > 1:
+                    await safe_answer(query, "Loading...")
+                    # Find next unshown index to avoid repeats
+                    step = 1 if direction == "next" else -1
+                    candidate = (cur_idx + step) % len(images)
+                    # Try up to len(images) steps to find an unshown image
+                    attempts = 0
+                    while candidate in shown_set and attempts < len(images):
+                        candidate = (candidate + step) % len(images)
+                        attempts += 1
+                    # If all shown, reset and start fresh
+                    if attempts >= len(images):
+                        shown_set = set()
+                    new_idx = candidate
+                    shown_set.add(new_idx)
+                    # Update shown set in cache
+                    if isinstance(entry, dict):
+                        entry["shown"] = shown_set
+                        _cache_set(img_key, entry)
                     new_url = images[new_idx]
                     # Rebuild navigation keyboard with updated index
                     new_kb = [
-                        [InlineKeyboardButton("⬅", callback_data=f"imgn:{new_idx}:{img_key}:prev"),
-                         InlineKeyboardButton("❌", callback_data="close_message"),
-                         InlineKeyboardButton("➡", callback_data=f"imgn:{new_idx}:{img_key}:next")],
+                        [InlineKeyboardButton("◀", callback_data=f"imgn:{new_idx}:{img_key}:prev"),
+                         InlineKeyboardButton("✕", callback_data="close_message"),
+                         InlineKeyboardButton("▶", callback_data=f"imgn:{new_idx}:{img_key}:next")],
                     ]
-                    # Preserve existing top rows from the current keyboard (except nav row)
+                    # Preserve existing top rows from the current keyboard (except last nav row)
                     if query.message and query.message.reply_markup:
                         old_rows = list(query.message.reply_markup.inline_keyboard)
-                        # Drop last row (old nav) and append new nav
                         top_rows = old_rows[:-1] if old_rows else []
                         new_kb = top_rows + new_kb
                     try:
-                        await query.message.edit_media(
-                            InputMediaPhoto(media=new_url),
-                            reply_markup=InlineKeyboardMarkup(new_kb),
-                        )
-                    except Exception:
-                        pass
+                        # Use saved_caption to keep info text on image change
+                        if saved_caption:
+                            await query.message.edit_media(
+                                InputMediaPhoto(
+                                    media=new_url,
+                                    caption=saved_caption,
+                                    parse_mode=ParseMode.HTML,
+                                ),
+                                reply_markup=InlineKeyboardMarkup(new_kb),
+                            )
+                        else:
+                            await query.message.edit_media(
+                                InputMediaPhoto(media=new_url),
+                                reply_markup=InlineKeyboardMarkup(new_kb),
+                            )
+                    except Exception as exc:
+                        logger.debug(f"imgn edit_media error: {exc}")
                 else:
-                    await safe_answer(query, "No more images.")
+                    await safe_answer(query, "No more images available.")
         except Exception as exc:
             logger.debug(f"imgn handler error: {exc}")
         return
@@ -5725,6 +5839,43 @@ async def button_handler(
             is_on = new_val in ("true", "1")
             await safe_answer(query, f"{'Enabled' if is_on else 'Disabled'}!")
             await send_feature_flags_panel(context, chat_id, query)
+        return
+
+    # ── Filter settings panel ───────────────────────────────────────────────────────
+    if data == "admin_filter_settings":
+        if not is_admin:
+            return
+        dm_on = filters_config["global"].get("dm", True)
+        grp_on = filters_config["global"].get("group", True)
+        text = (
+            b("Filter Settings") + "\n\n"
+            f"<b>DM:</b> {'ON' if dm_on else 'OFF'}\n"
+            f"<b>GROUP:</b> {'ON' if grp_on else 'OFF'}"
+        )
+        keyboard = [
+            [bold_button("TOGGLE DM", callback_data="filter_toggle_dm")],
+            [bold_button("TOGGLE GROUP", callback_data="filter_toggle_group")],
+            [bold_button("🔙 BACK", callback_data="admin_back")],
+        ]
+        await safe_edit_text(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    if data == "filter_toggle_dm":
+        if not is_admin:
+            return
+        filters_config["global"]["dm"] = not filters_config["global"].get("dm", True)
+        state = "ON" if filters_config["global"]["dm"] else "OFF"
+        await safe_answer(query, f"DM filter: {state}")
+        await button_handler(update, context, "admin_filter_settings")
+        return
+
+    if data == "filter_toggle_group":
+        if not is_admin:
+            return
+        filters_config["global"]["group"] = not filters_config["global"].get("group", True)
+        state = "ON" if filters_config["global"]["group"] else "OFF"
+        await safe_answer(query, f"Group filter: {state}")
+        await button_handler(update, context, "admin_filter_settings")
         return
 
     # ── Category settings ──────────────────────────────────────────────────────────
@@ -6302,18 +6453,85 @@ async def button_handler(
         manga_id = data[len("mdex_track_"):]
         manga = MangaDexClient.get_manga(manga_id)
         if not manga:
-            await safe_answer(query, "Manga not found.")
+            await safe_answer(query, "Manga not found. Try searching again.")
             return
         attrs = manga.get("attributes", {}) or {}
         titles = attrs.get("title", {}) or {}
         title = titles.get("en") or next(iter(titles.values()), "Unknown")
+        status = (attrs.get("status") or "unknown").replace("_", " ").title()
         context.user_data["au_manga_id"] = manga_id
         context.user_data["au_manga_title"] = title
+        context.user_data["au_manga_status"] = status
+        # Step 1: Ask for delivery mode
+        keyboard = [
+            [bold_button("Full Manga", callback_data="au_mode_full"),
+             bold_button("Latest Chapters", callback_data="au_mode_latest")],
+            [bold_button("🔙 Cancel", callback_data="admin_autoupdate")],
+        ]
+        await safe_edit_text(
+            query,
+            b(f"📚 {e(title)}") + "\n\n"
+            + bq(b("Choose delivery mode:\n\n")
+                 + "Full Manga — send all chapters from beginning\n"
+                 + "Latest Chapters — only send new chapters as they release"),
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    if data in ("au_mode_full", "au_mode_latest"):
+        if not is_admin:
+            return
+        mode = "full" if data == "au_mode_full" else "latest"
+        context.user_data["au_manga_mode"] = mode
+        title = context.user_data.get("au_manga_title", "Unknown")
+        # Step 2: Ask for interval
+        keyboard = [
+            [bold_button("5 min", callback_data="au_interval_5"),
+             bold_button("10 min", callback_data="au_interval_10")],
+            [bold_button("Random (5-10 min)", callback_data="au_interval_random"),
+             bold_button("Custom", callback_data="au_interval_custom")],
+            [bold_button("🔙 Cancel", callback_data="admin_autoupdate")],
+        ]
+        await safe_edit_text(
+            query,
+            b(f"📚 {e(title)}") + f"\n<b>Mode:</b> {mode.title()}\n\n"
+            + bq(b("Choose check interval:")),
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
+
+    if data.startswith("au_interval_"):
+        if not is_admin:
+            return
+        interval_key = data[len("au_interval_"):]
+        if interval_key == "5":
+            interval_minutes = 5
+        elif interval_key == "10":
+            interval_minutes = 10
+        elif interval_key == "random":
+            interval_minutes = -1  # -1 = random 5–10
+        elif interval_key == "custom":
+            context.user_data["au_waiting_for_interval"] = True
+            user_states[uid] = AU_CUSTOM_INTERVAL
+            await safe_edit_text(
+                query,
+                b("📚 Custom Interval") + "\n\n"
+                + bq(b("Send interval in minutes (e.g. 15):")),
+                reply_markup=InlineKeyboardMarkup([[bold_button("🔙 Cancel", callback_data="admin_autoupdate")]]),
+            )
+            return
+        else:
+            interval_minutes = 10
+        context.user_data["au_manga_interval"] = interval_minutes
+        title = context.user_data.get("au_manga_title", "Unknown")
+        mode = context.user_data.get("au_manga_mode", "latest")
+        # Step 3: Ask for target channel
         user_states[uid] = AU_ADD_MANGA_TARGET
         await safe_edit_text(
             query,
-            b(f"📚 Track: {e(title)}") + "\n\n"
-            + bq(b("Send the target channel ID or @username\nto receive new chapter notifications:")),
+            b(f"📚 {e(title)}") + f"\n<b>Mode:</b> {mode.title()} | "
+            + f"<b>Interval:</b> {interval_minutes if interval_minutes > 0 else 'Random 5–10'} min\n\n"
+            + bq(b("Send the target channel @username or ID:")),
             reply_markup=InlineKeyboardMarkup([[bold_button("🔙 Cancel", callback_data="admin_autoupdate")]]),
         )
         return
@@ -6863,11 +7081,18 @@ async def handle_admin_message(
             context.user_data["new_ch_uname"] = uname
             context.user_data["new_ch_title"] = tg_chat.title
             user_states[uid] = ADD_CHANNEL_TITLE
+            # Build channel preview link so admin can verify which channel they're naming
+            ch_link = f"https://t.me/{uname.lstrip('@')}" if not str(tg_chat.id).startswith("-100") else ""
+            ch_info = f"<b>Channel:</b> {e(tg_chat.title)}\n<b>Username:</b> {e(uname)}\n<b>ID:</b> <code>{tg_chat.id}</code>"
+            if ch_link:
+                ch_info += f"\n<b>Link:</b> {ch_link}"
+            keyboard = [[bold_button("🔙 Cancel", callback_data="manage_force_sub")]]
             msg = await safe_send_message(
                 context.bot, chat_id,
-                b(f"✅ Channel found: {e(tg_chat.title)}") + "\n\n"
-                + bq(b("Send a display title for this channel, or send /skip to use the channel name:")),
-                reply_markup=InlineKeyboardMarkup([[bold_button("🔙 Cancel", callback_data="manage_force_sub")]]),
+                b("✅ Channel found!") + "\n\n"
+                + bq(ch_info) + "\n\n"
+                + b("Send a display title for this channel, or /skip to use the channel name:"),
+                reply_markup=InlineKeyboardMarkup(keyboard),
             )
             await store_bot_prompt(context, msg)
         except Exception as exc:
@@ -7248,46 +7473,97 @@ async def handle_admin_message(
         user_states.pop(uid, None)
         return
 
+    if state == AU_CUSTOM_INTERVAL:
+        try:
+            mins = int(text.strip())
+            if mins < 1:
+                raise ValueError("Too small")
+        except ValueError:
+            await safe_send_message(
+                context.bot, chat_id,
+                b("❌ Please send a valid number of minutes (e.g. 15):"),
+                reply_markup=InlineKeyboardMarkup([[bold_button("🔙 Cancel", callback_data="admin_autoupdate")]]),
+            )
+            return
+        context.user_data["au_manga_interval"] = mins
+        user_states[uid] = AU_ADD_MANGA_TARGET
+        title = context.user_data.get("au_manga_title", "Unknown")
+        mode = context.user_data.get("au_manga_mode", "latest")
+        await safe_send_message(
+            context.bot, chat_id,
+            b(f"📚 {e(title)}") + f"\n<b>Mode:</b> {mode.title()} | <b>Interval:</b> {mins} min\n\n"
+            + bq(b("Send the target channel @username or ID:")),
+            reply_markup=InlineKeyboardMarkup([[bold_button("🔙 Cancel", callback_data="admin_autoupdate")]]),
+        )
+        return
+
     if state == AU_ADD_MANGA_TARGET:
         identifier = text.strip()
         manga_id = context.user_data.get("au_manga_id")
         manga_title = context.user_data.get("au_manga_title", "Unknown")
+        manga_mode = context.user_data.get("au_manga_mode", "latest")
+        manga_interval = context.user_data.get("au_manga_interval", 60)
         if not manga_id:
-            await safe_send_message(context.bot, chat_id, b("Session expired. Start over."))
+            await safe_send_message(context.bot, chat_id, b("Session expired. Please start over."))
             user_states.pop(uid, None)
             return
         try:
             tg_chat = await context.bot.get_chat(identifier)
             success = MangaTracker.add_tracking(manga_id, manga_title, tg_chat.id)
             if success:
-                # Get latest chapter as baseline
-                latest = MangaDexClient.get_latest_chapter(manga_id)
-                if latest:
-                    attrs = latest.get("attributes", {}) or {}
-                    ch = attrs.get("chapter")
-                    if ch:
-                        try:
-                            with db_manager.get_cursor() as cur:
-                                cur.execute(
-                                    "UPDATE manga_auto_updates SET last_chapter = %s "
-                                    "WHERE manga_id = %s AND target_chat_id = %s",
-                                    (ch, manga_id, tg_chat.id)
-                                )
-                        except Exception:
-                            pass
+                # For "latest" mode: save the current latest chapter as baseline so we don't re-send old ones
+                if manga_mode == "latest":
+                    latest = MangaDexClient.get_latest_chapter(manga_id)
+                    if latest:
+                        attrs = latest.get("attributes", {}) or {}
+                        ch = attrs.get("chapter")
+                        if ch:
+                            try:
+                                with db_manager.get_cursor() as cur:
+                                    cur.execute(
+                                        "UPDATE manga_auto_updates SET last_chapter = %s, interval_minutes = %s "
+                                        "WHERE manga_id = %s AND target_chat_id = %s",
+                                        (ch, manga_interval, manga_id, tg_chat.id)
+                                    )
+                            except Exception:
+                                pass
+                else:
+                    # Full mode: save interval only, start from chapter 0
+                    try:
+                        with db_manager.get_cursor() as cur:
+                            cur.execute(
+                                "UPDATE manga_auto_updates SET interval_minutes = %s, mode = %s "
+                                "WHERE manga_id = %s AND target_chat_id = %s",
+                                (manga_interval, manga_mode, manga_id, tg_chat.id)
+                            )
+                    except Exception:
+                        pass
+
+                interval_label = "Random 5–10 min" if manga_interval == -1 else f"{manga_interval} min"
                 await safe_send_message(
                     context.bot, chat_id,
                     b(f"✅ Now tracking: {e(manga_title)}") + "\n\n"
                     + bq(
-                        b("Notifications will be sent to: ") + e(tg_chat.title) + "\n"
-                        + b("Checks run every hour automatically.")
+                        f"<b>Channel:</b> {e(tg_chat.title or tg_chat.username or str(tg_chat.id))}\n"
+                        f"<b>Mode:</b> {manga_mode.title()}\n"
+                        f"<b>Check interval:</b> {interval_label}\n\n"
+                        + b("New chapters will be sent automatically.")
                     ),
                 )
             else:
-                await safe_send_message(context.bot, chat_id, b("❌ Failed to add tracking."))
+                await safe_send_message(context.bot, chat_id, b("❌ Failed to add tracking. Check that the bot has access to the channel."))
         except Exception as exc:
-            await safe_send_message(context.bot, chat_id, UserFriendlyError.get_user_message(exc))
+            await safe_send_message(
+                context.bot, chat_id,
+                b("❌ Could not find that channel.\n\n") + bq(b("Make sure:\n• The bot is an admin in the channel\n• Username is correct (starts with @)\n\nError: ")) + code(e(str(exc)[:100])),
+                reply_markup=InlineKeyboardMarkup([[bold_button("🔙 Back", callback_data="admin_autoupdate")]]),
+            )
+            return
         user_states.pop(uid, None)
+        context.user_data.pop("au_manga_id", None)
+        context.user_data.pop("au_manga_title", None)
+        context.user_data.pop("au_manga_mode", None)
+        context.user_data.pop("au_manga_interval", None)
         await send_admin_menu(chat_id, context)
         return
 
